@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from dw_refactor_agent.assessment.llm.catalog_proposals import (
+    CATALOG_PROPOSAL_SCHEMA_VERSION,
+)
 from dw_refactor_agent.assessment.llm.inspection_cache_policy import (
     ISSUE_SCHEMA_VERSION,
     PARSER_SCHEMA_VERSION,
@@ -36,8 +39,8 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
 from dw_refactor_agent.config import TEXT_ENCODING
 
 MID_LAYERS = {"DWD", "DWS", "DIM"}
-CHECKPOINT_MANIFEST_VERSION = 4
-RESUMABLE_CHECKPOINT_MANIFEST_VERSIONS = {4}
+CHECKPOINT_MANIFEST_VERSION = 5
+RESUMABLE_CHECKPOINT_MANIFEST_VERSIONS = {5}
 MAX_CHECKPOINT_VARIANTS_PER_TABLE = 4
 MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE = 8
 INSPECTION_RESULT_SUFFIX = ".inspection.json"
@@ -120,6 +123,15 @@ class GenerateModelCheckpoint:
                 "asset_manifest_hash": self.asset_manifest_hash,
                 "status": "running",
                 "published": False,
+                "catalog_proposal_audit": {
+                    "schema_version": CATALOG_PROPOSAL_SCHEMA_VERSION,
+                    "catalog_snapshot_hash": self.catalog_snapshot_hash,
+                    "proposals": [],
+                    "proposal_count": 0,
+                    "conflicts": [],
+                    "conflict_count": 0,
+                    "generated_at": None,
+                },
                 "created_at": _utc_timestamp(),
                 "updated_at": _utc_timestamp(),
                 "table_count": sum(
@@ -818,6 +830,27 @@ class GenerateModelCheckpoint:
             self._write_manifest()
             return report_path
 
+    def write_catalog_proposal_audit(
+        self,
+        proposal_report: dict[str, Any],
+    ) -> None:
+        """Persist derived proposals without treating them as resume input."""
+        proposals = proposal_report.get("catalog_proposals") or []
+        conflicts = proposal_report.get("catalog_proposal_conflicts") or []
+        if not isinstance(proposals, list) or not isinstance(conflicts, list):
+            raise ValueError("catalog proposal audit must contain lists")
+        with self._lock:
+            self._manifest["catalog_proposal_audit"] = {
+                "schema_version": CATALOG_PROPOSAL_SCHEMA_VERSION,
+                "catalog_snapshot_hash": self.catalog_snapshot_hash,
+                "proposals": copy.deepcopy(proposals),
+                "proposal_count": len(proposals),
+                "conflicts": copy.deepcopy(conflicts),
+                "conflict_count": len(conflicts),
+                "generated_at": _utc_timestamp(),
+            }
+            self._write_manifest()
+
     def _invalidate_publication_rejected_variants(
         self,
         validation: dict[str, Any],
@@ -877,6 +910,9 @@ class GenerateModelCheckpoint:
             layer_report = self._manifest.get("layer_classification_csv")
             if not isinstance(layer_report, dict):
                 layer_report = {}
+            proposal_audit = self._manifest.get("catalog_proposal_audit")
+            if not isinstance(proposal_audit, dict):
+                proposal_audit = {}
             return {
                 "enabled": True,
                 "run_id": self.run_id,
@@ -911,5 +947,11 @@ class GenerateModelCheckpoint:
                 "layer_classification_csv_path": layer_report.get("path"),
                 "layer_classification_table_count": layer_report.get(
                     "row_count", 0
+                ),
+                "catalog_proposal_count": proposal_audit.get(
+                    "proposal_count", 0
+                ),
+                "catalog_proposal_conflict_count": proposal_audit.get(
+                    "conflict_count", 0
                 ),
             }

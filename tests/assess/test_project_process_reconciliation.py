@@ -1,3 +1,5 @@
+import pytest
+
 from dw_refactor_agent.assessment.llm.context_builder import TableContext
 from dw_refactor_agent.assessment.llm.generation_contract import (
     _validate_semantics,
@@ -517,6 +519,12 @@ def test_shared_metric_with_multiple_fact_processes_is_blocked():
     enrich_results_with_project_semantics(
         [sale, refund, summary],
         contexts,
+        catalog={
+            "business_processes": [
+                {"code": "SALE"},
+                {"code": "REFUND"},
+            ]
+        },
     )
     validate_inspection_result(
         summary,
@@ -607,6 +615,7 @@ def test_metric_process_must_match_contributing_fact_evidence():
     enrich_results_with_project_semantics(
         [sale, account, summary],
         contexts,
+        catalog={"business_processes": [{"code": "SALE"}]},
     )
     validate_inspection_result(
         summary,
@@ -621,7 +630,15 @@ def test_metric_process_must_match_contributing_fact_evidence():
     assert summary.validation["composite_process_invalid"]
 
 
-def test_equivalent_source_process_codes_use_one_stable_value():
+@pytest.mark.parametrize(
+    ("catalog", "expected_mode"),
+    [
+        ({"business_processes": [{"code": "SALE"}]}, "composite"),
+        ({"business_processes": []}, ""),
+    ],
+    ids=("confirmed", "unconfirmed"),
+)
+def test_only_confirmed_source_process_codes_propagate(catalog, expected_mode):
     sale = _result(
         "sale",
         process="SALE",
@@ -666,8 +683,12 @@ def test_equivalent_source_process_codes_use_one_stable_value():
     enrich_results_with_project_semantics(
         [sale, legacy_sale, summary],
         contexts,
+        catalog=catalog,
     )
 
-    assert summary.business_process_mode == "composite"
-    assert summary.business_process_conflicts == []
-    assert summary.derived_metrics[0]["business_process"] == "SALE"
+    assert summary.business_process_mode == expected_mode
+    if expected_mode:
+        assert summary.business_process_conflicts == []
+        assert summary.derived_metrics[0]["business_process"] == "SALE"
+    else:
+        assert "business_process" not in summary.derived_metrics[0]

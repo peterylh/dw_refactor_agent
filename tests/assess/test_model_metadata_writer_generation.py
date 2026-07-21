@@ -1215,7 +1215,7 @@ def test_generate_checkpoint_safely_invalidates_legacy_manifest(
     checkpoint_dir = project_dir / "mid_checkpoints"
     manifest_path = checkpoint_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["version"] = 3
+    manifest["version"] = 4
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     recovered = GenerateModelCheckpoint(

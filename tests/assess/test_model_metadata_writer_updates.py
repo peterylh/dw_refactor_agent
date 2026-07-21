@@ -530,6 +530,7 @@ def test_project_semantics_reconciles_unique_process_and_entity_evidence():
     updates_module.reconcile_project_semantics(
         [customer, order_detail, store_daily],
         contexts,
+        catalog={"business_processes": [{"code": "ORDER_SALE"}]},
     )
 
     assert [entity["code"] for entity in order_detail.entities] == [
@@ -742,6 +743,7 @@ def test_project_dwd_process_reconciliation_requires_metric_passthrough():
     updates_module.reconcile_project_semantics(
         [source, target],
         contexts,
+        catalog={"business_processes": [{"code": "SALE"}]},
     )
 
     assert target.business_process == "SALE"

@@ -862,42 +862,17 @@ def _catalog_codes_from_file(path: Path, key: str) -> List[str]:
     return _catalog_codes(_load_yaml_mapping(path).get(key) or [])
 
 
-def _candidate_catalog_codes(
-    published_codes: List[str],
-    changes: List[Dict[str, Any]],
-    section: str,
-) -> List[str]:
-    codes = {code.casefold(): code for code in published_codes}
-    for change in changes:
-        if change.get("section") != section:
-            continue
-        entry = (
-            change.get("entry")
-            if isinstance(change.get("entry"), dict)
-            else {}
-        )
-        code = str(entry.get("code") or change.get("code") or "").strip()
-        if not code:
-            continue
-        canonical = code.casefold()
-        if str(change.get("action") or "").strip().lower() == "delete":
-            codes.pop(canonical, None)
-        else:
-            codes[canonical] = code
-    return sorted(codes.values())
-
-
 def _catalog_summary(
     temp_project: TempProject,
     result: Dict[str, Any],
     *,
     dry_run: bool,
 ) -> Dict[str, Any]:
-    changes = list(
-        result.get("planned_catalog_updates")
-        or result.get("catalog_updates")
-        or []
-    )
+    proposals = [
+        item
+        for item in result.get("catalog_proposals") or []
+        if isinstance(item, dict)
+    ]
     published_process_codes = _catalog_codes_from_file(
         temp_project.target_dir / "business_processes.yaml",
         "business_processes",
@@ -906,15 +881,21 @@ def _catalog_summary(
         temp_project.target_dir / "semantic_subjects.yaml",
         "semantic_subjects",
     )
-    candidate_process_codes = _candidate_catalog_codes(
-        published_process_codes,
-        changes,
-        "business_processes",
+    candidate_process_codes = published_process_codes
+    candidate_subject_codes = published_subject_codes
+    proposed_process_codes = sorted(
+        {
+            str(item.get("code") or "")
+            for item in proposals
+            if item.get("kind") == "business_process" and item.get("code")
+        }
     )
-    candidate_subject_codes = _candidate_catalog_codes(
-        published_subject_codes,
-        changes,
-        "semantic_subjects",
+    proposed_subject_codes = sorted(
+        {
+            str(item.get("code") or "")
+            for item in proposals
+            if item.get("kind") == "semantic_subject" and item.get("code")
+        }
     )
 
     expected_process = temp_project.expected_catalog["business_processes"]
@@ -924,6 +905,12 @@ def _catalog_summary(
     )
     subject_overlap = sorted(
         set(candidate_subject_codes) & set(expected_subject)
+    )
+    proposed_process_overlap = sorted(
+        set(proposed_process_codes) & set(expected_process)
+    )
+    proposed_subject_overlap = sorted(
+        set(proposed_subject_codes) & set(expected_subject)
     )
     return {
         "business_process_count": len(candidate_process_codes),
@@ -936,6 +923,14 @@ def _catalog_summary(
         "generated_semantic_subject_codes": candidate_subject_codes,
         "semantic_subject_overlap_codes": subject_overlap,
         "semantic_subject_overlap_count": len(subject_overlap),
+        "proposed_business_process_overlap_codes": (proposed_process_overlap),
+        "proposed_business_process_overlap_count": len(
+            proposed_process_overlap
+        ),
+        "proposed_semantic_subject_overlap_codes": proposed_subject_overlap,
+        "proposed_semantic_subject_overlap_count": len(
+            proposed_subject_overlap
+        ),
         "candidate": {
             "business_process_count": len(candidate_process_codes),
             "semantic_subject_count": len(candidate_subject_codes),
@@ -947,6 +942,15 @@ def _catalog_summary(
             "semantic_subject_count": len(published_subject_codes),
             "business_process_codes": published_process_codes,
             "semantic_subject_codes": published_subject_codes,
+        },
+        "proposals": {
+            "business_process_count": len(proposed_process_codes),
+            "semantic_subject_count": len(proposed_subject_codes),
+            "business_process_codes": proposed_process_codes,
+            "semantic_subject_codes": proposed_subject_codes,
+            "conflict_count": int(
+                result.get("catalog_proposal_conflict_count") or 0
+            ),
         },
     }
 
@@ -1098,6 +1102,13 @@ def _summarize_project(
         "catalog_update": result.get("catalog_update"),
         "planned_catalog_updates": result.get("planned_catalog_updates") or [],
         "catalog_updates": result.get("catalog_updates") or [],
+        "catalog_proposals": result.get("catalog_proposals") or [],
+        "catalog_proposal_count": int(
+            result.get("catalog_proposal_count") or 0
+        ),
+        "catalog_proposal_conflict_count": int(
+            result.get("catalog_proposal_conflict_count") or 0
+        ),
         "llm_middle_correct_count": llm_middle_correct,
         "llm_middle_accuracy": (
             llm_middle_correct / middle_count if middle_count else 0.0
@@ -1248,6 +1259,9 @@ def run_benchmark(
         "total_catalog_change_count": sum(
             item["catalog_change_count"] for item in summaries
         ),
+        "total_catalog_proposal_count": sum(
+            item["catalog_proposal_count"] for item in summaries
+        ),
         "total_business_process_count": sum(
             item["catalog_summary"]["business_process_count"]
             for item in summaries
@@ -1290,9 +1304,9 @@ def _print_report(report: Dict[str, Any]) -> None:
         print(
             "  {source_project}: first_attempt={llm_middle_accuracy:.2%} "
             "post_retry={post_retry_middle_accuracy:.2%} "
-            "models={generated_model_count} catalog_changes={catalog_change_count}".format(
-                **project
-            )
+            "models={generated_model_count} "
+            "catalog_changes={catalog_change_count} "
+            "catalog_proposals={catalog_proposal_count}".format(**project)
         )
 
 

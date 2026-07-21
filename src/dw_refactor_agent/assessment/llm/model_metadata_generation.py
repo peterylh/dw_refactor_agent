@@ -23,6 +23,10 @@ _src_root = Path(__file__).resolve().parents[3]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
+from dw_refactor_agent.assessment.llm.catalog_proposals import (
+    build_catalog_proposal_report,
+    empty_catalog_proposal_report,
+)
 from dw_refactor_agent.assessment.llm.generation_contract import (
     infer_execution_mapping,
 )
@@ -57,9 +61,7 @@ from dw_refactor_agent.assessment.project_facts.business_semantics import (
     LEGACY_BUSINESS_SEMANTICS_FILE_NAME,
     _infer_table_type,
     _layer_from_table_name,
-    _normalize_catalog_code,
     _split_catalog_payloads,
-    build_business_semantics_catalog_from_inspection,
     build_initial_business_semantics_catalog,
     catalog_mapping_for_model,
     load_business_semantics_catalog,
@@ -227,64 +229,15 @@ def _generate_metadata_catalog_for_plan(
     }
 
 
-def _catalog_entries_by_code(
-    catalog: dict[str, Any],
-    key: str,
-) -> dict[str, dict[str, Any]]:
-    entries: dict[str, dict[str, Any]] = {}
-    for entry in catalog.get(key) or []:
-        if not isinstance(entry, dict):
-            continue
-        raw_code = str(entry.get("code") or "").strip()
-        canonical_code = _normalize_catalog_code(raw_code)
-        if not canonical_code:
-            continue
-        normalized = dict(entry)
-        normalized["code"] = raw_code
-        normalized.pop("tables", None)
-        entries[canonical_code] = normalized
-    return entries
-
-
-def _catalog_entry_changes(
-    base_catalog: dict[str, Any],
-    candidate_catalog: dict[str, Any],
-) -> list[dict[str, Any]]:
-    changes = []
-    for section in ("business_processes", "semantic_subjects"):
-        before = _catalog_entries_by_code(base_catalog, section)
-        after = _catalog_entries_by_code(candidate_catalog, section)
-        for code, entry in sorted(after.items()):
-            previous = before.get(code)
-            if previous is None:
-                changes.append(
-                    {
-                        "section": section,
-                        "action": "add",
-                        "code": code,
-                        "entry": entry,
-                    }
-                )
-            elif previous != entry:
-                changes.append(
-                    {
-                        "section": section,
-                        "action": "update",
-                        "code": code,
-                        "previous": previous,
-                        "entry": entry,
-                    }
-                )
-    return changes
-
-
 def _empty_catalog_update_report() -> dict[str, Any]:
-    return {
+    report = {
         "catalog_update": None,
         "catalog_change_count": 0,
         "catalog_updates": [],
         "planned_catalog_updates": [],
     }
+    report.update(empty_catalog_proposal_report())
+    return report
 
 
 def _resolved_catalog_results_from_inspection_results(
@@ -358,64 +311,14 @@ def _merge_llm_catalog_discoveries(
             model_metadata=model_metadata,
             resolution_policy=resolution_policy,
         )
-    candidate_catalog = build_business_semantics_catalog_from_inspection(
-        project,
-        catalog_results,
-        base_catalog=base_catalog,
+    report = _empty_catalog_update_report()
+    report.update(
+        build_catalog_proposal_report(
+            catalog_results,
+            confirmed_catalog=base_catalog,
+        )
     )
-    changes = _catalog_entry_changes(base_catalog, candidate_catalog)
-    if not changes:
-        return _empty_catalog_update_report()
-
-    write_result = write_initial_business_semantics_catalog(
-        project,
-        overwrite=True,
-        dry_run=dry_run,
-        inspection_results=catalog_results,
-    )
-    written_names = sorted(write_result.get("written_names") or [])
-    update = {
-        "project": project,
-        "path": write_result.get("path"),
-        "paths": write_result.get("paths") or {},
-        "changed": True,
-        "updated": bool(write_result.get("updated")),
-        "dry_run": dry_run,
-        "change_count": len(changes),
-        "changes": changes,
-        "written_names": [] if dry_run else written_names,
-        "planned_written_names": written_names if dry_run else [],
-    }
-    return {
-        "catalog_update": update,
-        "catalog_change_count": len(changes),
-        "catalog_updates": [] if dry_run else changes,
-        "planned_catalog_updates": changes if dry_run else [],
-    }
-
-
-def _catalog_candidate_from_llm_result(
-    project: str,
-    *,
-    llm_result: dict[str, Any],
-    base_catalog: dict[str, Any],
-    model_metadata: dict[str, dict[str, Any]],
-    resolution_policy: LayerResolutionPolicy,
-    update_catalog: bool,
-) -> tuple[dict[str, Any], list[TableInspectResult]]:
-    resolved_results = _resolved_catalog_results_from_llm_result(
-        llm_result,
-        model_metadata=model_metadata,
-        resolution_policy=resolution_policy,
-    )
-    if not update_catalog:
-        return base_catalog, resolved_results
-    candidate = build_business_semantics_catalog_from_inspection(
-        project,
-        resolved_results,
-        base_catalog=base_catalog,
-    )
-    return candidate, resolved_results
+    return report
 
 
 def _apply_catalog_assignments_to_generated_models(

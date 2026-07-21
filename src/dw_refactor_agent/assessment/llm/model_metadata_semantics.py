@@ -427,7 +427,7 @@ def enrich_results_with_project_semantics(
     """Enrich related entities, then reconcile project-wide semantic codes."""
     enrich_results_with_related_entities(results, contexts)
     reconcile_project_semantics(results, contexts, catalog=catalog)
-    _mark_composite_business_processes(results, contexts)
+    _mark_composite_business_processes(results, contexts, catalog=catalog)
     promoted_results = [
         result
         for result in results
@@ -604,8 +604,11 @@ def reconcile_project_semantics(
 def _mark_composite_business_processes(
     results: list[TableInspectResult],
     contexts: dict[str, TableContext],
+    *,
+    catalog: dict[str, Any] | None,
 ) -> None:
     """Mark DWS facts whose metrics are contributed by multiple sources."""
+    established_codes = _catalog_code_lookup(catalog, "business_processes")
     for result in results:
         if (
             result.table_type != "fact"
@@ -625,19 +628,26 @@ def _mark_composite_business_processes(
         )
         if len(evidence) < 2:
             continue
-        process_evidence = [
-            (source, metrics)
-            for _identity, source, metrics in evidence
-            if source.table_type == "fact"
-            and source.status != "blocked"
-            and str(source.business_process or "").strip()
-        ]
-        if not process_evidence:
+        process_evidence = []
+        has_unconfirmed_source_process = False
+        for _identity, source, metrics in evidence:
+            source_process = str(source.business_process or "").strip()
+            confirmed_process = established_codes.get(
+                source_process.casefold()
+            )
+            if (
+                source.table_type == "fact"
+                and source.status != "blocked"
+                and confirmed_process
+            ):
+                process_evidence.append((source, metrics, confirmed_process))
+            elif source_process:
+                has_unconfirmed_source_process = True
+        if has_unconfirmed_source_process or not process_evidence:
             continue
         metric_process_evidence: dict[int, set[str]] = {}
         metrics_by_identity: dict[int, dict[str, Any]] = {}
-        for source, metrics in process_evidence:
-            process = str(source.business_process or "").strip()
+        for _source, metrics, process in process_evidence:
             for metric in metrics:
                 identity = id(metric)
                 metrics_by_identity[identity] = metric
@@ -832,10 +842,21 @@ def _reconcile_business_processes(
                 results,
                 contexts,
             )
-            source_processes = {
+            if len(sources) != 1:
+                continue
+            raw_source_processes = [
                 str(source.business_process or "").strip()
                 for source in sources
                 if str(source.business_process or "").strip()
+            ]
+            if not raw_source_processes or any(
+                process.casefold() not in established_codes
+                for process in raw_source_processes
+            ):
+                continue
+            source_processes = {
+                established_codes[process.casefold()]
+                for process in raw_source_processes
             }
             if len(source_processes) != 1:
                 continue

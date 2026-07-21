@@ -1,7 +1,12 @@
+from types import SimpleNamespace
+
 import pytest
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.catalog_proposals import (
+    build_catalog_proposal_report,
+)
 from dw_refactor_agent.assessment.llm.layer_resolution import (
     LayerResolutionPolicy,
 )
@@ -130,58 +135,49 @@ def _generate_catalog_result_for_context(ctx):
     return None
 
 
-def test_run_generate_model_metadata_llm_dry_run_plans_catalog_merge(
-    tmp_path, monkeypatch
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    project = "generate_llm_catalog_dry_run"
-    project_dir = _write_catalog_project(
-        tmp_path,
-        monkeypatch,
-        project,
-        catalog=_catalog_payload(),
-        ddl_tables=["dwd_order_detail", "dim_customer"],
-    )
-    _install_generate_catalog_fake_inspector(
-        monkeypatch,
-        writer_module,
-        table_names=["dwd_order_detail", "dim_customer"],
-        result_factory=_generate_catalog_result_for_context,
-    )
-
-    result = run_generate_model_metadata(
-        project,
-        api_key="test",
-        dry_run=True,
-    )
-    planned_codes = {
-        update["code"] for update in result["planned_catalog_updates"]
-    }
-    processes = yaml.safe_load(
-        (project_dir / "business_processes.yaml").read_text(encoding="utf-8")
-    )
-    subjects = yaml.safe_load(
-        (project_dir / "semantic_subjects.yaml").read_text(encoding="utf-8")
-    )
-
-    assert result["catalog_change_count"] == 2
-    assert result["catalog_update"]["updated"] is False
-    assert result["catalog_update"]["planned_written_names"] == [
-        "business_processes",
-        "semantic_subjects",
+def test_catalog_proposals_dedupe_sources_and_report_name_conflicts():
+    results = [
+        _generate_catalog_dimension_result(
+            SimpleNamespace(table_name=table_name, layer="DIM")
+        )
+        for table_name in ("dim_customer", "DIM_CUSTOMER_ALIAS")
     ]
-    assert planned_codes == {"ORDER_TRANSACTION", "CUSTOMER"}
-    assert processes["business_processes"] == []
-    assert subjects["semantic_subjects"] == []
+    results[0].entities[0].update(code="customer", name="客户")
+    results[1].entities[0].update(code="customer", name="Customer")
+
+    report = build_catalog_proposal_report(
+        results,
+        confirmed_catalog={"semantic_subjects": []},
+    )
+
+    assert report["catalog_proposal_count"] == 1
+    proposal = report["catalog_proposals"][0]
+    assert proposal["code"] == "CUSTOMER"
+    assert proposal["display_name"] is None
+    assert proposal["display_name_candidates"] == ["Customer", "客户"]
+    assert proposal["source_tables"] == [
+        "dim_customer",
+        "DIM_CUSTOMER_ALIAS",
+    ]
+    assert len(proposal["evidence"]) == 2
+    assert report["catalog_proposal_conflicts"] == [
+        {
+            "kind": "semantic_subject",
+            "code": "CUSTOMER",
+            "display_name_candidates": ["Customer", "客户"],
+            "source_tables": ["dim_customer", "DIM_CUSTOMER_ALIAS"],
+            "status": "conflict",
+        }
+    ]
 
 
-def test_run_generate_model_metadata_llm_writes_catalog_merge(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("dry_run", [True, False], ids=("dry-run", "write"))
+def test_run_generate_model_metadata_only_proposes_new_catalog_codes(
+    tmp_path, monkeypatch, dry_run
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
-    project = "generate_llm_catalog_write"
+    project = f"generate_llm_catalog_{dry_run}"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -199,44 +195,28 @@ def test_run_generate_model_metadata_llm_writes_catalog_merge(
     result = run_generate_model_metadata(
         project,
         api_key="test",
-        dry_run=False,
+        dry_run=dry_run,
     )
     catalog = config.load_business_semantics_catalog(project)
 
-    assert result["catalog_change_count"] == 2
-    assert result["catalog_update"]["updated"] is True
-    assert result["catalog_update"]["written_names"] == [
-        "business_processes",
-        "semantic_subjects",
-    ]
-    assert catalog["business_processes"] == [
-        {
-            "code": "ORDER_TRANSACTION",
-            "name": "Order Transaction",
-            "data_domain": "04",
-            "business_area": "SHOP",
-        }
-    ]
-    assert catalog["semantic_subjects"] == [
-        {
-            "code": "CUSTOMER",
-            "name": "客户",
-            "data_domain": "04",
-            "business_area": "SHOP",
-        }
-    ]
-    fact_model = yaml.safe_load(
-        (project_dir / "mid" / "models" / "dwd_order_detail.yaml").read_text(
-            encoding="utf-8"
+    assert result["catalog_change_count"] == 0
+    assert result["catalog_update"] is None
+    assert result["catalog_proposal_count"] == 2
+    assert result["publication"]["status"] == "blocked"
+    assert result["publication"]["published"] is False
+    assert catalog["business_processes"] == []
+    assert catalog["semantic_subjects"] == []
+    assert not (project_dir / "mid/models/dwd_order_detail.yaml").exists()
+    assert not (project_dir / "mid/models/dim_customer.yaml").exists()
+    if not dry_run:
+        checkpoint_manifest = yaml.safe_load(
+            (project_dir / "mid_checkpoints/manifest.json").read_text(
+                encoding="utf-8"
+            )
         )
-    )
-    dimension_model = yaml.safe_load(
-        (project_dir / "mid" / "models" / "dim_customer.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert fact_model["business_process"] == "ORDER_TRANSACTION"
-    assert dimension_model["semantic_subject"] == "CUSTOMER"
+        audit = checkpoint_manifest["catalog_proposal_audit"]
+        assert audit["proposal_count"] == 2
+        assert audit["proposals"] == result["catalog_proposals"]
 
 
 def test_run_generate_model_metadata_preserves_governed_catalog_code_case(
@@ -282,11 +262,12 @@ def test_run_generate_model_metadata_preserves_governed_catalog_code_case(
 
     assert result["publication"]["status"] == "published"
     assert result["catalog_change_count"] == 0
+    assert result["catalog_proposals"] == []
     assert catalog["business_processes"][0]["code"] == "order_transaction"
     assert model["business_process"] == "order_transaction"
 
 
-def test_run_generate_model_metadata_update_catalog_false_skips_catalog_merge(
+def test_run_generate_model_metadata_update_catalog_false_keeps_proposals(
     tmp_path, monkeypatch
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -314,9 +295,14 @@ def test_run_generate_model_metadata_update_catalog_false_skips_catalog_merge(
     )
 
     assert result["catalog_initialized"] is False
-    assert result["catalog_update"] is None
-    assert result["catalog_change_count"] == 0
-    assert result["planned_catalog_updates"] == []
+    assert result["catalog_proposal_count"] == 1
+    assert result["catalog_proposals"][0]["code"] == "ORDER_TRANSACTION"
+    checkpoint = yaml.safe_load(
+        (project_dir / "mid_checkpoints/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert checkpoint["catalog_proposal_audit"]["proposal_count"] == 1
     assert not (project_dir / "business_taxonomy.yaml").exists()
     assert not (project_dir / "business_processes.yaml").exists()
     assert not (project_dir / "semantic_subjects.yaml").exists()
@@ -360,7 +346,8 @@ def test_run_generate_model_metadata_llm_catalog_merge_skips_blocked_results(
     )
     catalog = config.load_business_semantics_catalog(project)
 
-    assert result["catalog_change_count"] == 1
+    assert result["catalog_proposal_count"] == 1
+    assert result["catalog_proposals"][0]["code"] == "CUSTOMER"
     assert result["publication"]["status"] == "blocked"
     assert result["publication"]["published"] is False
     assert catalog["business_processes"] == []
@@ -381,7 +368,7 @@ def _refresh_catalog_models(*table_names):
     }
 
 
-def test_run_metadata_write_llm_dry_run_plans_catalog_merge_and_skeleton(
+def test_run_metadata_write_llm_dry_run_plans_proposals_and_skeleton(
     tmp_path, monkeypatch
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -407,8 +394,8 @@ def test_run_metadata_write_llm_dry_run_plans_catalog_merge_and_skeleton(
         api_key="test",
         dry_run=True,
     )
-    planned_codes = {
-        update["code"] for update in result["planned_catalog_updates"]
+    proposed_codes = {
+        proposal["code"] for proposal in result["catalog_proposals"]
     }
 
     assert result["catalog_initialized"] is True
@@ -417,14 +404,8 @@ def test_run_metadata_write_llm_dry_run_plans_catalog_merge_and_skeleton(
         "semantic_subjects",
         "taxonomy",
     ]
-    assert result["catalog_change_count"] == 2
-    assert result["catalog_update"]["updated"] is False
-    assert result["catalog_update"]["planned_written_names"] == [
-        "business_processes",
-        "semantic_subjects",
-        "taxonomy",
-    ]
-    assert planned_codes == {"ORDER_TRANSACTION", "CUSTOMER"}
+    assert result["catalog_proposal_count"] == 2
+    assert proposed_codes == {"ORDER_TRANSACTION", "CUSTOMER"}
     assert not (project_dir / "business_taxonomy.yaml").exists()
     assert not (project_dir / "business_processes.yaml").exists()
     assert not (project_dir / "semantic_subjects.yaml").exists()
@@ -437,15 +418,26 @@ def test_run_metadata_write_llm_dry_run_plans_catalog_merge_and_skeleton(
     )
 
     assert disabled["catalog_initialized"] is False
-    assert disabled["catalog_update"] is None
-    assert disabled["catalog_change_count"] == 0
-    assert disabled["planned_catalog_updates"] == []
+    assert disabled["catalog_proposal_count"] == 2
     assert not (project_dir / "business_taxonomy.yaml").exists()
     assert not (project_dir / "business_processes.yaml").exists()
     assert not (project_dir / "semantic_subjects.yaml").exists()
 
+    frozen = run_metadata_write(
+        project,
+        api_key="test",
+        dry_run=True,
+        business_semantics_catalog=_catalog_payload(
+            processes=[_order_detail_process("ORDER_TRANSACTION")],
+            subjects=[_customer_subject()],
+        ),
+    )
 
-def test_run_metadata_write_llm_writes_catalog_merge_without_expanding_taxonomy(
+    assert frozen["catalog_initialized"] is False
+    assert frozen["catalog_proposals"] == []
+
+
+def test_run_metadata_write_llm_reports_proposals_without_catalog_mutation(
     tmp_path, monkeypatch
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -500,34 +492,19 @@ def test_run_metadata_write_llm_writes_catalog_merge_without_expanding_taxonomy(
     )
     catalog = config.load_business_semantics_catalog(project)
 
-    assert result["catalog_change_count"] == 2
-    assert result["catalog_update"]["updated"] is True
-    assert result["catalog_update"]["written_names"] == [
-        "business_processes",
-        "semantic_subjects",
-    ]
+    assert result["catalog_proposal_count"] == 2
+    assert {item["code"] for item in result["catalog_proposals"]} == {
+        "ORDER_TRANSACTION",
+        "CUSTOMER",
+    }
     assert taxonomy["data_domains"] == [
         {"id": "04", "code": "TRAN", "name": "交易域"}
     ]
     assert taxonomy["business_areas"] == [
         {"id": "SHOP", "code": "SHOP", "name": "零售业务"}
     ]
-    assert catalog["business_processes"] == [
-        {
-            "code": "ORDER_TRANSACTION",
-            "name": "Order Transaction",
-            "data_domain": "",
-            "business_area": "",
-        }
-    ]
-    assert catalog["semantic_subjects"] == [
-        {
-            "code": "CUSTOMER",
-            "name": "客户",
-            "data_domain": "04",
-            "business_area": "SHOP",
-        }
-    ]
+    assert catalog["business_processes"] == []
+    assert catalog["semantic_subjects"] == []
 
 
 def _write_single_writer_project(
@@ -538,6 +515,7 @@ def _write_single_writer_project(
     mid_tables=("dwd_order_detail",),
     include_ods_ads=False,
     existing_models=None,
+    catalog=None,
 ):
     project_dir = tmp_path / project
     mid_ddl_dir = project_dir / "mid" / "ddl"
@@ -583,7 +561,11 @@ def _write_single_writer_project(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
-    _write_split_catalog(project_dir, project, _catalog_payload())
+    _write_split_catalog(
+        project_dir,
+        project,
+        catalog if catalog is not None else _catalog_payload(),
+    )
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -730,6 +712,7 @@ def test_generate_single_writer_pass_keeps_ods_ads_base_models(
         project,
         mid_tables=("dwd_order_detail",),
         include_ods_ads=True,
+        catalog=_catalog_payload(processes=[{"code": "ORDER_TRANSACTION"}]),
     )
     seen_contexts = []
 
@@ -813,6 +796,7 @@ def test_generate_single_writer_pass_deletes_then_writes_final_models(
                 "table_type": "fact",
             }
         },
+        catalog=_catalog_payload(subjects=[{"code": "ORDER_DETAIL"}]),
     )
     model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
 
@@ -881,6 +865,7 @@ def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refi
                 "table_type": "fact",
             }
         },
+        catalog=_catalog_payload(processes=[{"code": "ORDER_TRANSACTION"}]),
     )
     model_path = project_dir / "mid" / "models" / "dws_order_summary.yaml"
 

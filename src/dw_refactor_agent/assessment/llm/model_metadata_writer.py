@@ -11,6 +11,7 @@ DWD/DWS 表中的指标字段回写到 models/{table}.yaml，并把 DWD 事实�
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -123,9 +124,6 @@ from dw_refactor_agent.assessment.llm.model_metadata_generation import (  # noqa
     _apply_catalog_assignments_to_generated_models,
     _asset_role_from_generate_asset,
     _candidate_model_publication_targets,
-    _catalog_candidate_from_llm_result,
-    _catalog_entries_by_code,
-    _catalog_entry_changes,
     _catalog_table_assets,
     _empty_catalog_update_report,
     _ensure_metadata_catalog_skeleton,
@@ -357,6 +355,9 @@ def _preflight_blocked_generate_result(
         "update_catalog": update_catalog,
         "replace_existing_models": replace_existing_models,
         "asset_manifest": preflight.manifest.to_dict(),
+        "confirmed_catalog_snapshot_hash": (
+            preflight.manifest.catalog_snapshot_hash
+        ),
         "planned_deleted_model_files": [],
         "deleted_model_files": [],
         "generated_model_count": 0,
@@ -368,6 +369,7 @@ def _preflight_blocked_generate_result(
         "candidate_model_summary": _model_metadata_summary({}),
         "published_model_summary": _model_metadata_summary(published_models),
         "candidate_catalog_summary": _catalog_metadata_summary(catalog),
+        "confirmed_catalog_summary": _catalog_metadata_summary(catalog),
         "published_catalog_summary": _catalog_metadata_summary(catalog),
         "candidate_models": {},
         "publication": {
@@ -510,7 +512,7 @@ def run_generate_model_metadata(
         for table_name, metadata in generate_plan.base_model_metadata.items()
     }
     catalog_update_report = _empty_catalog_update_report()
-    candidate_catalog = catalog
+    confirmed_catalog = catalog
     resolved_catalog_results: list[TableInspectResult] = []
     if api_key:
         try:
@@ -554,33 +556,31 @@ def run_generate_model_metadata(
                 generate_plan.base_model_metadata,
                 llm_result,
             )
-            candidate_catalog, resolved_catalog_results = (
-                _catalog_candidate_from_llm_result(
-                    project,
-                    llm_result=llm_result,
-                    base_catalog=catalog,
+            resolved_catalog_results = (
+                _resolved_catalog_results_from_llm_result(
+                    llm_result,
                     model_metadata=generate_plan.base_model_metadata,
                     resolution_policy=generate_plan.resolution_policy,
-                    update_catalog=update_catalog,
                 )
             )
             final_model_metadata = (
                 _apply_catalog_assignments_to_generated_models(
                     project,
                     final_model_metadata,
-                    catalog=candidate_catalog,
+                    catalog=confirmed_catalog,
                     results=resolved_catalog_results,
                 )
             )
-            if update_catalog:
-                catalog_update_report = _merge_llm_catalog_discoveries(
-                    project,
-                    llm_result=llm_result,
-                    base_catalog=catalog,
-                    model_metadata=generate_plan.base_model_metadata,
-                    resolution_policy=generate_plan.resolution_policy,
-                    dry_run=True,
-                )
+            catalog_update_report = _merge_llm_catalog_discoveries(
+                project,
+                llm_result=llm_result,
+                base_catalog=confirmed_catalog,
+                model_metadata=generate_plan.base_model_metadata,
+                resolution_policy=generate_plan.resolution_policy,
+                dry_run=True,
+            )
+            if checkpoint:
+                checkpoint.write_catalog_proposal_audit(catalog_update_report)
         except BaseException:
             if checkpoint:
                 checkpoint.close()
@@ -592,7 +592,7 @@ def run_generate_model_metadata(
             final_model_metadata,
             preflight.manifest.validation_assets(),
             llm_result=llm_result,
-            catalog=candidate_catalog,
+            catalog=confirmed_catalog,
         )
         (
             candidate_table_names,
@@ -640,7 +640,7 @@ def run_generate_model_metadata(
                         catalog_written_names,
                     ) = _render_generated_catalog_files(
                         project,
-                        candidate_catalog,
+                        confirmed_catalog,
                         enabled=update_catalog,
                     )
                     model_updates, deleted_model_files = (
@@ -696,10 +696,10 @@ def run_generate_model_metadata(
         if should_publish
         else load_model_metadata(project)
     )
-    published_catalog = candidate_catalog if should_publish else catalog
+    published_catalog = confirmed_catalog if should_publish else catalog
     candidate_model_summary = _model_metadata_summary(final_model_metadata)
     published_model_summary = _model_metadata_summary(published_model_metadata)
-    candidate_catalog_summary = _catalog_metadata_summary(candidate_catalog)
+    candidate_catalog_summary = _catalog_metadata_summary(confirmed_catalog)
     published_catalog_summary = _catalog_metadata_summary(published_catalog)
     changed_updates = [update for update in model_updates if update["changed"]]
     checkpoint_report = (
@@ -725,6 +725,9 @@ def run_generate_model_metadata(
         "update_catalog": update_catalog,
         "replace_existing_models": replace_existing_models,
         "asset_manifest": preflight.manifest.to_dict(),
+        "confirmed_catalog_snapshot_hash": (
+            preflight.manifest.catalog_snapshot_hash
+        ),
         "planned_deleted_model_files": base_plan.planned_deleted_model_files,
         "deleted_model_files": deleted_model_files,
         "generated_model_count": len(base_plan.model_updates),
@@ -738,6 +741,9 @@ def run_generate_model_metadata(
         "candidate_model_summary": candidate_model_summary,
         "published_model_summary": published_model_summary,
         "candidate_catalog_summary": candidate_catalog_summary,
+        "confirmed_catalog_summary": _catalog_metadata_summary(
+            confirmed_catalog
+        ),
         "published_catalog_summary": published_catalog_summary,
         "candidate_models": (
             {
@@ -1181,7 +1187,14 @@ def run_metadata_write(
         model_paths=model_paths,
         resolution_policy=resolution_policy,
     )
-    if plan.catalog_plan.ensure_skeleton:
+    if business_semantics_catalog is not None:
+        base_catalog = copy.deepcopy(business_semantics_catalog)
+        catalog_report = {
+            "catalog_initialized": False,
+            "catalog_init_written_names": [],
+            "planned_catalog_written_names": [],
+        }
+    elif plan.catalog_plan.ensure_skeleton:
         base_catalog, catalog_report = _ensure_metadata_catalog_skeleton(
             project,
             dry_run=dry_run,
@@ -1288,16 +1301,15 @@ def run_metadata_write(
         )
         for result in results
     ]
-    if plan.catalog_plan.merge_llm_discoveries:
-        catalog_update_report = _merge_llm_catalog_discoveries(
-            project,
-            llm_result=None,
-            inspection_results=results,
-            base_catalog=base_catalog,
-            model_metadata=plan.base_model_metadata,
-            resolution_policy=plan.resolution_policy,
-            dry_run=dry_run,
-        )
+    catalog_update_report = _merge_llm_catalog_discoveries(
+        project,
+        llm_result=None,
+        inspection_results=results,
+        base_catalog=base_catalog,
+        model_metadata=plan.base_model_metadata,
+        resolution_policy=plan.resolution_policy,
+        dry_run=dry_run,
+    )
 
     result = {
         "project": project,
