@@ -458,6 +458,20 @@ def test_run_generate_model_metadata_dry_run_missing_catalog_uses_in_memory_skel
     ]
     assert result["model_change_count"] == 1
     assert result["model_update_count"] == 0
+    assert result["candidate_resolution"]["status"] == "quarantined"
+    candidate = result["candidate_models"]["dwd_order_detail"]
+    assert candidate["version"] == 3
+    assert candidate["governance"]["withheld_sections"] == [
+        "classification",
+        "business_semantics",
+        "entities",
+        "grain",
+        "metrics",
+    ]
+    assert (
+        result["publication"]["transition_plan"]["would_publish_status"]
+        == "published_with_quarantine"
+    )
     assert str(existing_model) in result["planned_deleted_model_files"]
     assert existing_model.exists()
     assert not (project_dir / "business_taxonomy.yaml").exists()

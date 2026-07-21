@@ -26,6 +26,7 @@ DIMENSION_CONTENT_TYPES = frozenset({"INFO", "TAG", "TREE"})
 
 GOVERNANCE_REASON_SECTIONS = {
     "inspection_unavailable": frozenset(MODEL_SECTIONS),
+    "inspection_not_requested": frozenset(MODEL_SECTIONS),
     "structure_bundle_incomplete": frozenset(STRUCTURE_SECTIONS),
     "classification_untrusted": frozenset({"classification"}),
     "business_semantics_untrusted": frozenset({"business_semantics"}),

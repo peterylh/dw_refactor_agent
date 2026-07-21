@@ -55,6 +55,11 @@ from dw_refactor_agent.assessment.llm.model_metadata_checkpoint import (
 from dw_refactor_agent.assessment.llm.model_metadata_publication import (
     metadata_publication_lock,
 )
+from dw_refactor_agent.assessment.llm.publication_transitions import (
+    plan_inspection_run_transition,
+    plan_no_llm_generation_decisions,
+    plan_publication_transition,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import (
     DEFAULT_MIN_CACHEABLE_CONFIDENCE,
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
@@ -598,12 +603,25 @@ def run_generate_model_metadata(
             llm_result=llm_result,
             catalog=confirmed_catalog,
         )
+        inspection_transition = plan_inspection_run_transition(
+            llm_enabled=llm_result is not None,
+            inspection_targets=preflight.manifest.inspection_target_set,
+            reports=(llm_result or {}).get("tables") or [],
+        )
         resolved_candidate = None
         effective_model_metadata = final_model_metadata
-        if llm_result is not None:
+        if llm_result is not None or dry_run:
+            local_decisions = (llm_result or {}).get(
+                "local_section_decisions"
+            ) or []
+            if llm_result is None:
+                local_decisions = plan_no_llm_generation_decisions(
+                    preflight.manifest.inspection_target_set,
+                    final_model_metadata,
+                )
             resolved_candidate = resolve_generation_candidate(
                 final_model_metadata,
-                inspection_reports=llm_result.get("tables") or [],
+                inspection_reports=(llm_result or {}).get("tables") or [],
                 catalog=confirmed_catalog,
                 operational_layers={
                     asset.short_name: asset.operational_layer
@@ -614,13 +632,14 @@ def run_generate_model_metadata(
                 ],
                 validation_assets=preflight.manifest.validation_assets(),
                 generation_issues=publication_validation.get("issues") or [],
-                local_decisions=(
-                    llm_result.get("local_section_decisions") or []
-                ),
+                local_decisions=local_decisions,
                 lineage_data=preflight.manifest.lineage_data(),
             )
             effective_model_metadata = resolved_candidate.models
-            if resolved_candidate.status in {"blocked", "quarantined"}:
+            if llm_result is not None and resolved_candidate.status in {
+                "blocked",
+                "quarantined",
+            }:
                 candidate_errors = (
                     resolved_candidate.validation.get("errors") or []
                 )
@@ -727,6 +746,18 @@ def run_generate_model_metadata(
                 )
             )
         publication_blocked = publication_validation["status"] == "blocked"
+        candidate_status = (
+            resolved_candidate.status
+            if resolved_candidate is not None
+            else ("blocked" if publication_blocked else "complete")
+        )
+        if candidate_status in {"active", "passed"}:
+            candidate_status = "complete"
+        publication_transition = plan_publication_transition(
+            candidate_status=candidate_status,
+            inspection_transition=inspection_transition,
+            dry_run=dry_run,
+        )
         if checkpoint:
             try:
                 checkpoint.finish(
@@ -841,6 +872,8 @@ def run_generate_model_metadata(
             ),
             "published": should_publish,
             "validation": publication_validation,
+            "inspection_transition": inspection_transition.to_dict(),
+            "transition_plan": publication_transition.to_dict(),
         },
         "checkpoint": checkpoint_report,
         "flow": {

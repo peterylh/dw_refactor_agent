@@ -79,6 +79,12 @@ def _stable_json(value: Any) -> str:
     )
 
 
+def _issue_summary(issue: InspectionIssue) -> str:
+    location = issue.path or issue.table
+    items = ", ".join(issue.items)
+    return ": ".join(part for part in (issue.code, location, items) if part)
+
+
 def _table_key(value: Any) -> str:
     return identifier_match_key(str(value or ""))
 
@@ -1484,7 +1490,7 @@ def _validate_effective_models(
                     "type": "hard_block_issue",
                     "code": issue.code,
                     "table": decision.table_name,
-                    "message": issue.message,
+                    "message": _issue_summary(issue),
                 }
             )
     errors = list({_stable_json(error): error for error in errors}.values())
@@ -1558,9 +1564,36 @@ def resolve_generation_candidate(
         prior_decision = local_decisions_by_key.get(key)
         if prior_decision is not None:
             if report is None:
-                raise ValueError(
-                    "local section decision requires an inspection report"
+                if any(
+                    prior_decision.status(section) == "active"
+                    for section in MODEL_SECTIONS
+                ):
+                    raise ValueError(
+                        "uninspected local decisions cannot activate semantics"
+                    )
+                additional_issues = tuple(additional_by_key.get(key, ()))
+                combined_issues = sort_issues(
+                    (*prior_decision.issues, *additional_issues)
                 )
+                local_decisions.append(
+                    SectionDecision(
+                        table_name=prior_decision.table_name,
+                        statuses=prior_decision.statuses,
+                        reasons=prior_decision.reasons,
+                        issues=combined_issues,
+                        hard_block_issues=sort_issues(
+                            (
+                                *prior_decision.hard_block_issues,
+                                *(
+                                    issue
+                                    for issue in combined_issues
+                                    if issue.code in HARD_BLOCK_ISSUE_CODES
+                                ),
+                            )
+                        ),
+                    )
+                )
+                continue
             report = copy.deepcopy(report)
             report["issues"] = [
                 issue.to_dict() for issue in prior_decision.issues

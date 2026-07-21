@@ -37,6 +37,7 @@ TEST_TYPE_BY_FILE = {
     "tests/assess/test_model_metadata_writer_catalog.py": "scenario",
     "tests/assess/test_model_metadata_writer_generation.py": "scenario",
     "tests/assess/test_model_metadata_writer_updates.py": "scenario",
+    "tests/assess/test_publication_transitions.py": "unit",
     "tests/assess/test_project_process_reconciliation.py": "scenario",
     "tests/assess/test_report.py": "contract",
     "tests/assess/test_result_model.py": "contract",
