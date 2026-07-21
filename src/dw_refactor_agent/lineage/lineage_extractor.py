@@ -35,7 +35,7 @@ from dw_refactor_agent.config import (
     task_source_file,
 )
 from dw_refactor_agent.config import (
-    determine_layer as determine_config_layer,  # noqa: F401
+    determine_operational_layer as determine_config_layer,  # noqa: F401
 )
 from dw_refactor_agent.config import (
     ods_source_catalog_ddl_dialect as ods_source_catalog_ddl_dialect,

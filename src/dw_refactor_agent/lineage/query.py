@@ -6,7 +6,7 @@ import re
 from collections import Counter, deque
 from dataclasses import dataclass
 
-from dw_refactor_agent.config import determine_layer
+from dw_refactor_agent.config import determine_operational_layer
 from dw_refactor_agent.lineage.identifiers import (
     canonical_identifier,
     identifier_match_key,
@@ -153,7 +153,10 @@ def _normalize_direction(direction: str) -> str:
 
 def _table_layers(view: LineageView) -> dict[str, str]:
     return {
-        table.name: determine_layer(table.name, view.snapshot.project)
+        table.name: determine_operational_layer(
+            table.name,
+            view.snapshot.project,
+        )
         for table in view.tables()
         if table.name
     }
@@ -546,7 +549,8 @@ def build_project_stats(view: LineageView) -> ProjectStats:
     """Return project-wide lineage counts for a snapshot."""
     tables = view.tables()
     layer_counts = Counter(
-        determine_layer(table.name, view.snapshot.project) for table in tables
+        determine_operational_layer(table.name, view.snapshot.project)
+        for table in tables
     )
     return ProjectStats(
         project=view.snapshot.project,

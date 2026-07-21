@@ -30,7 +30,7 @@ from dw_refactor_agent.config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
     TEXT_ENCODING,
-    get_model_names_by_layer,
+    get_model_names_by_operational_layer,
     get_mysql_cmd,
     iter_project_asset_files,
     python_module_env,
@@ -59,7 +59,9 @@ def get_etl_date_partitions(
     tables = [
         line.strip() for line in result.strip().split("\n")[1:] if line.strip()
     ]
-    ods_model_tables = set(get_model_names_by_layer(project, "ODS"))
+    ods_model_tables = set(
+        get_model_names_by_operational_layer(project, "ODS")
+    )
     ods_tables = [t for t in tables if t in ods_model_tables]
     all_dates = set()
     for tbl in ods_tables:

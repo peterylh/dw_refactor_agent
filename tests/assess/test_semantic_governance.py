@@ -317,26 +317,35 @@ def test_llm_context_preserves_quarantined_upstream_metric_status(tmp_path):
     }
 
 
-def test_managed_assessment_consumers_do_not_read_raw_semantic_fields():
-    semantic_fields = set(MODEL_FIELD_SECTIONS)
+def test_managed_consumers_do_not_read_raw_model_fields():
+    governed_fields = set(MODEL_FIELD_SECTIONS) | {
+        "execution",
+        "operational_layer",
+    }
     managed_files = (
-        "assessment_context.py",
-        "project_facts/asset_catalog.py",
-        "project_facts/business_semantics.py",
-        "project_facts/entity_metadata.py",
-        "llm/context_builder.py",
-        "llm/model_metadata_catalog.py",
-        "llm/model_metadata_writer.py",
-        "rules/dimensions/depth.py",
-        "rules/dimensions/metadata_health.py",
-        "rules/dimensions/model_design.py",
-        "rules/dimensions/naming.py",
-        "rules/dimensions/reuse.py",
+        "assessment/assessment_context.py",
+        "assessment/project_facts/asset_catalog.py",
+        "assessment/project_facts/business_semantics.py",
+        "assessment/project_facts/entity_metadata.py",
+        "assessment/llm/context_builder.py",
+        "assessment/llm/model_metadata_catalog.py",
+        "assessment/llm/model_metadata_writer.py",
+        "assessment/rules/dimensions/depth.py",
+        "assessment/rules/dimensions/metadata_health.py",
+        "assessment/rules/dimensions/model_design.py",
+        "assessment/rules/dimensions/naming.py",
+        "assessment/rules/dimensions/reuse.py",
+        "execution/model_config.py",
+        "execution/planner.py",
+        "lineage/table_graph.py",
+        "refactor/verification_plan.py",
     )
     raw_receivers = {
         "metadata",
         "model_metadata",
         "raw_model_metadata",
+        "raw_model",
+        "raw",
         "models",
     }
 
@@ -350,13 +359,13 @@ def test_managed_assessment_consumers_do_not_read_raw_semantic_fields():
             return node.attr
         return None
 
-    root = PROJECT_ROOT / "src" / "dw_refactor_agent" / "assessment"
+    root = PROJECT_ROOT / "src" / "dw_refactor_agent"
     violations = []
     for relative_path in managed_files:
         path = root / relative_path
         tree = ast.parse(path.read_text(encoding="utf-8"))
         tainted = set(raw_receivers)
-        if relative_path == "llm/model_metadata_catalog.py":
+        if relative_path == "assessment/llm/model_metadata_catalog.py":
             tainted.update({"existing", "existing_model"})
         changed = True
         while changed:
@@ -398,7 +407,7 @@ def test_managed_assessment_consumers_do_not_read_raw_semantic_fields():
                     raw_slice = raw_slice.value
                 if isinstance(raw_slice, ast.Str):
                     field = raw_slice.s
-            if owner not in tainted or field not in semantic_fields:
+            if owner not in tainted or field not in governed_fields:
                 continue
             violations.append(f"{relative_path}:{node.lineno}:{field}")
     assert violations == []

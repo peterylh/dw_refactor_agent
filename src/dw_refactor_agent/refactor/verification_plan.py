@@ -172,7 +172,7 @@ def _job_entry(
     return {
         "job": job_name,
         "file": _relative(task_path),
-        "layer": config.determine_layer(target_table, project),
+        "layer": config.determine_operational_layer(target_table, project),
         "target": target_table,
     }
 
@@ -982,10 +982,19 @@ def _table_execution_slice_metadata(
     table: str,
     metadata_errors: list[dict],
 ) -> dict | None:
-    metadata = config.get_model_metadata(table, project) or {}
-    raw_execution = metadata.get("execution") or {}
-    if not isinstance(raw_execution, dict):
-        raw_execution = {}
+    metadata = config.get_model_metadata(table, project)
+    if metadata is None:
+        return None
+    try:
+        raw_execution = execution_config_for_model(table, metadata)
+    except ExecutionConfigError as exc:
+        _add_validation_error(
+            metadata_errors,
+            table,
+            "execution",
+            str(exc),
+        )
+        return None
     project_execution = (config.PROJECT_CONFIG.get(project) or {}).get(
         "execution"
     ) or {}
@@ -1043,7 +1052,9 @@ def _table_execution_slice_metadata(
 
 
 def _is_incremental_model(project: str, table: str) -> bool:
-    metadata = config.get_model_metadata(table, project) or {}
+    metadata = config.get_model_metadata(table, project)
+    if metadata is None:
+        return True
     raw_execution = execution_config_for_model(table, metadata)
     materialized = str(
         raw_execution.get("materialized") or "incremental"
@@ -1596,7 +1607,10 @@ def _ads_schema_change_tables(
     for change in ddl_changes:
         for key in ("table_name", "old_name", "new_name"):
             table = _short_name(change.get(key))
-            if table and config.determine_layer(table, project) == "ADS":
+            if (
+                table
+                and config.determine_operational_layer(table, project) == "ADS"
+            ):
                 tables.add(table)
     return sorted(tables)
 

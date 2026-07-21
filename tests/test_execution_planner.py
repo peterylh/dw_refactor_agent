@@ -113,6 +113,27 @@ def _rename_execution_model(
     )
 
 
+def _write_quarantined_v3_model(tmp_path, execution_yaml=""):
+    model_path = tmp_path / "warehouses/demo/mid/models/dwd_orders.yaml"
+    model_path.write_text(
+        "version: 3\n"
+        "name: dwd_orders\n"
+        "operational_layer: DWD\n"
+        f"{execution_yaml}"
+        "governance:\n"
+        "  status: quarantined\n"
+        "  schema_version: 1\n"
+        "  withheld_sections: [classification, business_semantics, entities, grain, metrics]\n"
+        "  reasons:\n"
+        "    classification: [structure_bundle_incomplete]\n"
+        "    business_semantics: [business_process_missing]\n"
+        "    entities: [structure_bundle_incomplete]\n"
+        "    grain: [structure_bundle_incomplete]\n"
+        "    metrics: [dependent_structure_unavailable]\n",
+        encoding="utf-8",
+    )
+
+
 def test_task_spec_validates_slice_against_model_name_ddl(
     monkeypatch, tmp_path
 ):
@@ -173,6 +194,50 @@ def test_task_spec_matches_execution_model_name_case_insensitively(
     assert spec.materialized == "full"
 
 
+def test_quarantined_v3_model_preserves_deterministic_task_spec(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config="execution:\n  materialized: full\n",
+        warehouse_execution="",
+    )
+    active_spec = ExecutionPlanner("demo").task_spec("dwd_orders", sql_path)
+    _write_quarantined_v3_model(
+        tmp_path,
+        "execution:\n"
+        "  materialized: full\n"
+        "  full_refresh_strategy: replace_all\n",
+    )
+
+    quarantined_spec = ExecutionPlanner("demo").task_spec(
+        "dwd_orders",
+        sql_path,
+    )
+
+    assert quarantined_spec == active_spec
+
+
+def test_quarantined_v3_model_still_requires_execution_contract(
+    monkeypatch,
+    tmp_path,
+):
+    _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config="execution:\n  materialized: full\n",
+    )
+    _write_quarantined_v3_model(tmp_path)
+
+    with pytest.raises(
+        ExecutionConfigError,
+        match="execution must be a mapping",
+    ):
+        ExecutionPlanner("demo")
+
+
 def test_task_spec_matches_execution_model_ddl_case_insensitively(
     monkeypatch, tmp_path
 ):
@@ -227,15 +292,14 @@ def test_snapshot_materialized_is_rejected(monkeypatch, tmp_path):
 
 
 def test_config_materialized_is_rejected(monkeypatch, tmp_path):
-    sql_path, _ = _write_demo_project(
+    _write_demo_project(
         monkeypatch,
         tmp_path,
         model_config="config:\n  materialized: full\n",
     )
-    planner = ExecutionPlanner("demo")
 
     with pytest.raises(ExecutionConfigError) as exc:
-        planner.task_spec("dwd_orders", sql_path)
+        ExecutionPlanner("demo")
 
     assert "config.materialized is no longer supported" in str(exc.value)
     assert "execution.materialized" in str(exc.value)

@@ -26,7 +26,7 @@ from dw_refactor_agent.config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
     TEXT_ENCODING,
-    get_model_names_by_layer,
+    get_model_names_by_operational_layer,
     get_mysql_cmd,
     iter_project_task_files,
     lineage_data_path,
@@ -444,7 +444,9 @@ def _discover_ods_dates(
     project: str, db_name: str, mysql_cmd: list[str]
 ) -> list[str]:
     """从 ODS 表发现所有日期."""
-    ods_model_tables = set(get_model_names_by_layer(project, "ODS"))
+    ods_model_tables = set(
+        get_model_names_by_operational_layer(project, "ODS")
+    )
     r = subprocess.run(
         mysql_cmd + [db_name],
         input="SHOW TABLES",
@@ -690,7 +692,11 @@ def main():
         DB_ENV_CONFIG[env]["port"],
         db_name,
     )
-    planner = ExecutionPlanner(project)
+    try:
+        planner = ExecutionPlanner(project)
+    except ExecutionConfigError as e:
+        print(f"错误: {e}")
+        return 1
 
     if args.full_refresh:
         print(f"\n{'=' * 60}")

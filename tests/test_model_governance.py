@@ -410,6 +410,17 @@ def test_default_loader_validates_governance_and_raw_loader_is_explicit(
         config.get_model_layer("dws_example", "governed_demo"),
         (config.UnavailableModelSection),
     )
+    assert (
+        config.get_model_operational_layer("dws_example", "governed_demo")
+        == "DWS"
+    )
+    assert config.get_model_names_by_operational_layer(
+        "governed_demo", "DWS"
+    ) == ["dws_example"]
+    assert (
+        config.determine_operational_layer("demo.DWS_Example", "governed_demo")
+        == "DWS"
+    )
     assert type(raw) is dict
     assert raw["governance"]["status"] == "quarantined"
 
@@ -428,5 +439,22 @@ def test_default_loader_validates_governance_and_raw_loader_is_explicit(
         }
     config.clear_model_metadata_cache()
     with pytest.raises(config.UnsupportedModelGovernanceError):
+        config.load_model_metadata("governed_demo")
+    config.clear_model_metadata_cache()
+
+    path.write_text(
+        yaml.safe_dump(_v3_quarantined(), sort_keys=False),
+        encoding="utf-8",
+    )
+    conflicting = _v3_quarantined()
+    conflicting["name"] = "DWS_EXAMPLE"
+    (model_dir / "conflicting.yaml").write_text(
+        yaml.safe_dump(conflicting, sort_keys=False),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        config.UnsupportedModelGovernanceError,
+        match="collide under case-insensitive lookup",
+    ):
         config.load_model_metadata("governed_demo")
     config.clear_model_metadata_cache()

@@ -790,3 +790,42 @@ def test_lineage_extractor_failure_aborts_before_database_execution(
     assert database_setup == []
     assert executed == []
     assert "lineage extraction failed" in capsys.readouterr().out
+
+
+def test_task_run_reports_eager_model_validation_error_before_sql(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    _configure_process_plan_project(monkeypatch, tmp_path)
+    executed = []
+
+    def fail_planner(_project):
+        raise ExecutionConfigError(
+            "[dwd_customer] execution must be a mapping"
+        )
+
+    monkeypatch.setattr(task_run, "ExecutionPlanner", fail_planner)
+    monkeypatch.setattr(
+        task_run,
+        "_run_job",
+        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
+    )
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+        ],
+    )
+
+    assert task_run.main() == 1
+    assert executed == []
+    assert (
+        "错误: [dwd_customer] execution must be a mapping"
+        in capsys.readouterr().out
+    )

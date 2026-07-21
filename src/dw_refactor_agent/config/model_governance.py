@@ -955,7 +955,14 @@ def get_operational_layer(metadata: Mapping[str, Any]) -> str | None:
 def get_execution_contract(metadata: Mapping[str, Any]) -> dict[str, Any]:
     model = ensure_governed_model(metadata)
     value = model.get("execution")
-    return copy.deepcopy(value) if isinstance(value, dict) else {}
+    if value is None and model.model_version == MODEL_SCHEMA_V2:
+        return {}
+    if not isinstance(value, dict):
+        raise UnsupportedModelGovernanceError(
+            f"{model.source + ': ' if model.source else ''}"
+            "execution must be a mapping"
+        )
+    return copy.deepcopy(value)
 
 
 def get_semantic_layer(

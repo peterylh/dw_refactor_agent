@@ -15,6 +15,7 @@ from dw_refactor_agent.execution.model_config import (
     ExecutionConfigError,
     SliceConfig,
     execution_config_for_model,
+    governed_execution_model,
     normalize_materialized,
     normalize_strategy,
     slice_config_from_mapping,
@@ -56,11 +57,12 @@ class ExecutionPlanner:
     ) -> TaskSpec:
         execution_model_name = str(model_name or job_name).strip()
         raw_model = self.model_metadata.get(
-            identifier_match_key(execution_model_name), {}
+            identifier_match_key(execution_model_name)
         )
-        raw_execution = execution_config_for_model(
-            execution_model_name,
-            raw_model,
+        raw_execution = (
+            execution_config_for_model(execution_model_name, raw_model)
+            if raw_model is not None
+            else {}
         )
 
         materialized = normalize_materialized(
@@ -340,18 +342,22 @@ class ExecutionPlanner:
                     )
                     or {}
                 )
-                if not isinstance(raw, dict):
-                    continue
-                name = raw.get("name") or model_path.stem
-                raw = dict(raw)
-                raw["name"] = name
+                if isinstance(raw, dict):
+                    raw = dict(raw)
+                    raw["name"] = raw.get("name") or model_path.stem
+                model = governed_execution_model(
+                    model_path.stem,
+                    raw,
+                    source=str(model_path),
+                )
+                name = model["name"]
                 name_key = identifier_match_key(name)
                 if name_key in metadata:
                     raise ExecutionConfigError(
                         "duplicate model metadata names under "
                         f"case-insensitive matching: {name!r}"
                     )
-                metadata[name_key] = raw
+                metadata[name_key] = model
         return metadata
 
     def _slice_config(

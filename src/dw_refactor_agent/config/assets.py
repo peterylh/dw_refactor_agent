@@ -12,6 +12,8 @@ import yaml
 from . import core
 from .model_governance import (
     UnavailableModelSection,
+    UnsupportedModelGovernanceError,
+    get_operational_layer,
     get_semantic_layer,
     validate_model_metadata,
 )
@@ -404,6 +406,7 @@ def _load_model_metadata_files(project: str, *, governed: bool) -> dict:
         return {}
 
     metadata = {}
+    governed_names = {}
     for model_path in model_paths:
         loaded = yaml.safe_load(
             model_path.read_text(encoding=core.TEXT_ENCODING)
@@ -424,16 +427,36 @@ def _load_model_metadata_files(project: str, *, governed: bool) -> dict:
         )
         raw = dict(raw)
         raw["name"] = name
-        metadata[name] = validate_model_metadata(
+        model = validate_model_metadata(
             raw,
             source=str(model_path),
         )
+        governed_name = str(model["name"])
+        name_key = governed_name.casefold()
+        if name_key in governed_names:
+            raise UnsupportedModelGovernanceError(
+                "model metadata names collide under case-insensitive lookup: "
+                f"{governed_names[name_key]!r} and {governed_name!r}"
+            )
+        governed_names[name_key] = governed_name
+        metadata[governed_name] = model
     return metadata
 
 
 def get_model_metadata(table_name: str, project: str) -> Optional[dict]:
     short = table_name.split(".")[-1]
-    return load_model_metadata(project).get(short)
+    models = load_model_metadata(project)
+    matches = [
+        metadata
+        for name, metadata in models.items()
+        if str(name).casefold() == short.casefold()
+    ]
+    if len(matches) > 1:
+        raise UnsupportedModelGovernanceError(
+            "model metadata names collide under case-insensitive lookup: "
+            f"{short!r}"
+        )
+    return matches[0] if matches else None
 
 
 def get_model_layer(
@@ -444,6 +467,17 @@ def get_model_layer(
     if not metadata:
         return None
     return get_semantic_layer(metadata)
+
+
+def get_model_operational_layer(
+    table_name: str,
+    project: str,
+) -> Optional[str]:
+    """Return the deterministic runtime layer for one model."""
+    metadata = get_model_metadata(table_name, project)
+    if not metadata:
+        return None
+    return get_operational_layer(metadata)
 
 
 def get_model_names_by_layer(project: str, layer: str) -> list[str]:
@@ -459,6 +493,19 @@ def get_model_names_by_layer(project: str, layer: str) -> list[str]:
     return sorted(names)
 
 
+def get_model_names_by_operational_layer(
+    project: str,
+    layer: str,
+) -> list[str]:
+    """Return model names routed through one deterministic asset layer."""
+    target_layer = str(layer).upper()
+    return sorted(
+        name
+        for name, metadata in load_model_metadata(project).items()
+        if get_operational_layer(metadata) == target_layer
+    )
+
+
 def determine_layer(
     table_name: str,
     project: str = None,
@@ -471,6 +518,17 @@ def determine_layer(
     if isinstance(layer, UnavailableModelSection):
         return layer
     return layer or "OTHER"
+
+
+def determine_operational_layer(
+    table_name: str,
+    project: str = None,
+) -> str:
+    """Return the deterministic runtime layer without semantic fallback."""
+    short = table_name.split(".")[-1]
+    if not project:
+        return "OTHER"
+    return get_model_operational_layer(short, project) or "OTHER"
 
 
 def layer_rank(layer_name: str) -> int:

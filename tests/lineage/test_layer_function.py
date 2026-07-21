@@ -63,6 +63,27 @@ def isolated_lineage_projects(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    (
+        tmp_path / default_project / "mid/models/dws_quarantined.yaml"
+    ).write_text(
+        "version: 3\n"
+        "name: dws_quarantined\n"
+        "operational_layer: DWS\n"
+        "execution:\n"
+        "  materialized: full\n"
+        "  full_refresh_strategy: replace_all\n"
+        "governance:\n"
+        "  status: quarantined\n"
+        "  schema_version: 1\n"
+        "  withheld_sections: [classification, business_semantics, entities, grain, metrics]\n"
+        "  reasons:\n"
+        "    classification: [structure_bundle_incomplete]\n"
+        "    business_semantics: [business_process_missing]\n"
+        "    entities: [structure_bundle_incomplete]\n"
+        "    grain: [structure_bundle_incomplete]\n"
+        "    metrics: [dependent_structure_unavailable]\n",
+        encoding="utf-8",
+    )
     config.clear_model_metadata_cache()
     configure_project(default_project)
     yield
@@ -82,11 +103,17 @@ class TestDetermineLayer:
             ("shop_dm.dws_product_sales_daily", "DWS"),
             ("ads_customer_rfm", "ADS"),
             ("shop_dm.ads_sales_dashboard", "ADS"),
+            ("dws_quarantined", "DWS"),
             ("unknown_table", "OTHER"),
             ("ods_", "OTHER"),
         ]
         for table_name, expected in scenarios:
             assert determine_layer(table_name) == expected
+
+        assert isinstance(
+            config.determine_layer("dws_quarantined", "unit_lineage"),
+            config.UnavailableModelSection,
+        )
 
         configure_project("unit_lineage_dim")
         assert determine_layer("dim_date") == "DIM"

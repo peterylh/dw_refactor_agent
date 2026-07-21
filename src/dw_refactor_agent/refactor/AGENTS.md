@@ -44,8 +44,9 @@
 - `shadow_run.py`：领取一个预建 QA 槽、建表、预填充必要数据、应用 DDL 并按 DAG 执行作业。
 - `compare.py`：按 shadow result 中的实际 QA 槽和 plan checks 对比生产库与 QA 库。
 
-表层级只读取模型 YAML 的 `layer`，不得通过表名前缀兜底推断。表名、字段名、
-catalog 和 database/schema 的内部匹配遵循血缘模块的大小写不敏感规则。
+物理执行、资产路径和旁路路由只读取 governance-aware operational layer；分层语义判断
+读取 semantic layer，quarantined classification 不得回退到 operational layer 或表名前缀。
+表名、字段名、catalog 和 database/schema 的内部匹配遵循血缘模块的大小写不敏感规则。
 
 ## 标准工作流
 
