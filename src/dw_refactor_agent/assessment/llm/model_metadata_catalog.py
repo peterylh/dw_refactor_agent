@@ -132,11 +132,18 @@ def _catalog_model_payload(
         execution_payload = dict(mapped_execution)
     else:
         execution_payload = existing_execution
-    materialized = _materialized_for_write(
-        execution_payload.get("materialized")
-        or mapping.get("materialized")
-        or "",
-        layer,
+    execution_mode = (
+        str(execution_payload.get("mode") or "task").strip().casefold()
+    )
+    materialized = (
+        ""
+        if execution_mode == "taskless"
+        else _materialized_for_write(
+            execution_payload.get("materialized")
+            or mapping.get("materialized")
+            or "",
+            layer,
+        )
     )
 
     updated = dict(existing)
@@ -144,7 +151,10 @@ def _catalog_model_payload(
     updated["name"] = table_name
     updated["layer"] = layer
     updated["table_type"] = table_type or "other"
-    if materialized:
+    if execution_mode == "taskless":
+        updated["execution"] = {"mode": "taskless"}
+        _drop_deprecated_execution_config(updated)
+    elif materialized:
         execution_payload["materialized"] = materialized
         updated["execution"] = execution_payload
         _drop_deprecated_execution_config(updated)

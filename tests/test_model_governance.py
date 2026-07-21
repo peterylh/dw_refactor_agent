@@ -141,6 +141,31 @@ def test_v3_withheld_sections_are_unavailable_but_operational_data_survives():
         )
 
 
+def test_v3_taskless_execution_is_valid_and_cannot_mix_task_fields():
+    taskless = _v3_quarantined()
+    taskless["execution"] = {"mode": "taskless"}
+
+    model = config.validate_model_metadata(taskless)
+
+    assert config.get_execution_contract(model) == {"mode": "taskless"}
+
+    for conflicting_field, value in (
+        ("materialized", "full"),
+        ("full_refresh_strategy", "replace_all"),
+        ("slice", {"param": "d", "column": "d", "period": "D"}),
+    ):
+        conflicting = _v3_quarantined()
+        conflicting["execution"] = {
+            "mode": "taskless",
+            conflicting_field: value,
+        }
+        with pytest.raises(
+            config.UnsupportedModelGovernanceError,
+            match="taskless execution cannot define task fields",
+        ):
+            config.validate_model_metadata(conflicting)
+
+
 def test_v3_without_governance_is_active_and_uses_canonical_fields():
     model = config.validate_model_metadata(_v3_active())
 

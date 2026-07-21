@@ -18,6 +18,7 @@ from dw_refactor_agent.execution.model_config import (
     governed_execution_model,
     normalize_materialized,
     normalize_strategy,
+    require_runnable_execution,
     slice_config_from_mapping,
 )
 from dw_refactor_agent.lineage.identifiers import identifier_match_key
@@ -64,6 +65,7 @@ class ExecutionPlanner:
             if raw_model is not None
             else {}
         )
+        require_runnable_execution(execution_model_name, raw_execution)
 
         materialized = normalize_materialized(
             execution_model_name,

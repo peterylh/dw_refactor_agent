@@ -1308,10 +1308,16 @@ def update_model_yaml(
             updated.get("layer") or result.declared_layer or ""
         ).upper()
         execution_payload = dict(updated.get("execution") or {})
-        execution_payload["materialized"] = _materialized_for_write(
-            execution_payload.get("materialized"),
-            materialized_layer,
-        )
+        if (
+            str(execution_payload.get("mode") or "").strip().casefold()
+            == "taskless"
+        ):
+            execution_payload = {"mode": "taskless"}
+        else:
+            execution_payload["materialized"] = _materialized_for_write(
+                execution_payload.get("materialized"),
+                materialized_layer,
+            )
         updated["execution"] = execution_payload
         _drop_deprecated_execution_config(updated)
 

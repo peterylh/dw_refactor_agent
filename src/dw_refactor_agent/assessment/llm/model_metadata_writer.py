@@ -18,7 +18,7 @@ import sys
 import threading
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import yaml
 
@@ -26,6 +26,9 @@ _src_root = Path(__file__).resolve().parents[3]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
+from dw_refactor_agent.assessment.llm.context_builder import (
+    InspectionContextSetError,
+)
 from dw_refactor_agent.assessment.llm.generation_candidate_resolver import (
     prepare_inspection_for_propagation,
     resolve_generation_candidate,
@@ -616,6 +619,7 @@ def run_generate_model_metadata(
                 ),
                 lineage_data=preflight.manifest.lineage_data(),
                 asset_content=preflight.manifest.inspection_content(),
+                inspection_targets=(preflight.manifest.inspection_target_set),
                 business_semantics_catalog=catalog,
                 catalog_snapshot_hash=(
                     preflight.manifest.catalog_snapshot_hash
@@ -651,6 +655,35 @@ def run_generate_model_metadata(
             )
             if checkpoint:
                 checkpoint.write_catalog_proposal_audit(catalog_update_report)
+        except InspectionContextSetError as exc:
+            blocked_preflight = GenerateAssetPreflight(
+                manifest=preflight.manifest,
+                errors=(
+                    {
+                        "type": exc.code,
+                        "table": exc.table,
+                        "message": str(exc),
+                    },
+                ),
+            )
+            blocked_result = _preflight_blocked_generate_result(
+                project,
+                preflight=blocked_preflight,
+                catalog=catalog,
+                catalog_report=catalog_report,
+                write_scope=write_scope,
+                update_catalog=update_catalog,
+                replace_existing_models=replace_existing_models,
+                dry_run=dry_run,
+            )
+            if checkpoint:
+                checkpoint.finish(
+                    status="blocked",
+                    published=False,
+                    validation=blocked_preflight.validation(),
+                )
+                blocked_result["checkpoint"] = checkpoint.report()
+            return blocked_result
         except BaseException:
             if checkpoint:
                 checkpoint.close()
@@ -1606,6 +1639,7 @@ def run_metadata_write(
     ) = None,
     lineage_data: dict[str, Any] | None = None,
     asset_content: dict[str, dict[str, str]] | None = None,
+    inspection_targets: Iterable[str] | None = None,
     business_semantics_catalog: dict[str, Any] | None = None,
     catalog_snapshot_hash: str = "",
     asset_manifest_hash: str = "",
@@ -1733,6 +1767,7 @@ def run_metadata_write(
             )
         ),
         asset_content=asset_content,
+        inspection_targets=inspection_targets,
         business_semantics_catalog=base_catalog,
         local_result_resolver=resolve_local_result,
         result_layer_resolver=lambda _ctx, result: layer_for_model(

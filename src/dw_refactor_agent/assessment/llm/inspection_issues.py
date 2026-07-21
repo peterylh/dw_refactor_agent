@@ -131,6 +131,7 @@ GENERATION_ERROR_ISSUE_CODES = {
         "entity_relationship_origin_unknown"
     ),
     "execution_materialized_mismatch": "execution_materialized_mismatch",
+    "execution_main_task_missing": "execution_main_task_missing",
     "execution_partition_overwrite_unsupported": (
         "execution_partition_overwrite_unsupported"
     ),
@@ -138,9 +139,11 @@ GENERATION_ERROR_ISSUE_CODES = {
     "execution_slice_invalid": "execution_slice_invalid",
     "execution_slice_missing": "execution_slice_missing",
     "execution_strategy_invalid": "execution_strategy_invalid",
+    "execution_task_binding_conflict": "execution_task_binding_conflict",
     "execution_task_missing": "execution_task_missing",
     "grain_column_missing": "grain_column_missing",
     "grain_entity_unknown": "grain_entity_unknown",
+    "inspection_context_set_mismatch": "inspection_context_set_mismatch",
     "llm_inspection_blocked": "inspection_blocked_summary_unexpanded",
     "llm_inspection_missing": "inspection_missing",
     "semantic_subject_missing": "semantic_subject_missing",
@@ -224,12 +227,15 @@ HARD_BLOCK_ISSUE_CODES = frozenset(
         "metric_propagation_not_converged",
         "internal_inspection_error",
         "inspection_blocked_summary_unexpanded",
+        "inspection_context_set_mismatch",
         "execution_materialized_mismatch",
+        "execution_main_task_missing",
         "execution_partition_overwrite_unsupported",
         "execution_slice_column_missing",
         "execution_slice_invalid",
         "execution_slice_missing",
         "execution_strategy_invalid",
+        "execution_task_binding_conflict",
         "execution_task_missing",
     }
 )

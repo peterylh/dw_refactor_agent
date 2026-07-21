@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import sqlglot
 from sqlglot import exp
 from typing_extensions import Literal
 
 from dw_refactor_agent.assessment.llm.context_builder import (
+    InspectionContextSetError,
     TableContext,
     build_contexts,
 )
@@ -189,7 +190,11 @@ def run_inspection_pipeline(
     asset_content: Optional[Dict[str, Dict[str, str]]] = None,
     business_semantics_catalog: Optional[Dict[str, Any]] = None,
     local_result_resolver: Optional[LocalResultResolver] = None,
+    inspection_targets: Optional[Iterable[str]] = None,
 ) -> InspectionResultBundle:
+    explicit_inspection_targets = (
+        tuple(inspection_targets) if inspection_targets is not None else None
+    )
     contexts = build_contexts(
         project,
         lineage_data,
@@ -200,7 +205,29 @@ def run_inspection_pipeline(
         use_model_metadata_asset_roles=use_model_metadata_asset_roles,
         asset_content=asset_content,
         business_semantics_catalog=business_semantics_catalog,
+        inspection_targets=explicit_inspection_targets,
     )
+    if explicit_inspection_targets is not None:
+        expected_targets = {
+            str(table_name or "").replace("`", "").replace('"', "").casefold()
+            for table_name in explicit_inspection_targets
+            if str(table_name or "").strip()
+        }
+        actual_targets = {
+            str(context.table_identity or context.table_name)
+            .replace("`", "")
+            .replace('"', "")
+            .casefold()
+            for context in contexts
+        }
+        if actual_targets != expected_targets:
+            raise InspectionContextSetError(
+                "inspection_context_set_mismatch: "
+                f"expected={sorted(expected_targets)}, "
+                f"actual={sorted(actual_targets)}",
+                expected=expected_targets,
+                actual=actual_targets,
+            )
     # Classify every writable model before building metric phases. In a cold
     # start all mid-layer models can carry the same direct-rule prior, so the
     # declared context layer cannot be used to decide which tables receive

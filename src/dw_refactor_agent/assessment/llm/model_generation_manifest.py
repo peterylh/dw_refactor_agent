@@ -24,11 +24,13 @@ from dw_refactor_agent.assessment.project_facts.business_semantics import (
 from dw_refactor_agent.config import (
     PROJECT_CONFIG,
     TEXT_ENCODING,
+    TasklessAssetConfigError,
     business_semantics_paths,
     iter_project_asset_files,
     iter_project_task_files,
     lineage_data_path,
     load_warehouse_config,
+    parse_external_taskless_assets,
 )
 from dw_refactor_agent.config.semantics import (
     load_business_semantics_catalog_from_dir,
@@ -43,7 +45,7 @@ from dw_refactor_agent.lineage.identifiers import (
 from dw_refactor_agent.lineage.sql_task_facts import extract_task_table_facts
 
 ABSENT_CONTENT_HASH = "absent"
-MANIFEST_SCHEMA_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
 INSPECTION_LAYERS = frozenset({"DIM", "DWD", "DWS"})
 
 
@@ -179,6 +181,8 @@ class ManagedGenerateAsset:
     task_full_refresh_flags: tuple[bool, ...]
     target_model_path: str
     existing_target_hash: str
+    producer_mode: str
+    producer_reason: str
     execution_contract_json: str
     execution_evidence_hash: str
     lineage_evidence_hash: str
@@ -207,6 +211,8 @@ class ManagedGenerateAsset:
                     self.task_full_refresh_flags,
                 )
             ],
+            "producer_mode": self.producer_mode,
+            "producer_reason": self.producer_reason,
         }
 
     def inspection_content(self) -> dict[str, str]:
@@ -236,6 +242,8 @@ class ManagedGenerateAsset:
             "task_content_hashes": list(self.task_content_hashes),
             "target_model_path": self.target_model_path,
             "existing_target_hash": self.existing_target_hash,
+            "producer_mode": self.producer_mode,
+            "producer_reason": self.producer_reason,
             "execution_contract": self.execution_contract(),
             "execution_evidence_hash": self.execution_evidence_hash,
             "lineage_evidence_hash": self.lineage_evidence_hash,
@@ -298,6 +306,16 @@ class GenerateAssetManifest:
         }
 
     def to_dict(self) -> dict[str, Any]:
+        taskless_tables = [
+            {
+                "canonical_identity": asset.canonical_identity,
+                "display_identity": asset.display_identity,
+                "producer": asset.producer_mode,
+                "reason": asset.producer_reason,
+            }
+            for asset in self.assets
+            if asset.producer_mode == "external"
+        ]
         return {
             "schema_version": self.schema_version,
             "project": self.project,
@@ -309,6 +327,8 @@ class GenerateAssetManifest:
             "inspection_target_set": list(self.inspection_target_set),
             "expected_model_paths": list(self.expected_model_paths),
             "existing_model_paths": list(self.existing_model_paths),
+            "taskless_table_count": len(taskless_tables),
+            "taskless_tables": taskless_tables,
             "assets": [asset.to_dict() for asset in self.assets],
             "excluded_datasets": [
                 dataset.to_dict() for dataset in self.excluded_datasets
@@ -738,6 +758,25 @@ def build_generate_asset_preflight(
     default_catalog = str(config.get("catalog") or "internal")
     default_database = str(config.get("db") or project_dir.name)
     errors: list[dict[str, str]] = []
+    try:
+        external_taskless_assets = parse_external_taskless_assets(
+            config,
+            default_catalog=default_catalog,
+            default_database=default_database,
+        )
+    except TasklessAssetConfigError as exc:
+        external_taskless_assets = ()
+        errors.append(
+            _preflight_error(
+                "taskless_asset_config_invalid",
+                table=exc.table,
+                message=str(exc),
+            )
+        )
+    external_taskless_by_key = {
+        declaration.match_key: declaration
+        for declaration in external_taskless_assets
+    }
     if config_source_path is not None:
         if not config_source_path.exists():
             errors.append(
@@ -937,6 +976,17 @@ def build_generate_asset_preflight(
                 )
             )
 
+    for key, declaration in sorted(external_taskless_by_key.items()):
+        if key in ddl_records:
+            continue
+        errors.append(
+            _preflight_error(
+                "taskless_asset_missing_ddl",
+                table=declaration.display_identity,
+                message=("external taskless declaration has no managed DDL"),
+            )
+        )
+
     for key in sorted(task_created_outputs):
         if key in ddl_records or key not in task_outputs:
             continue
@@ -994,25 +1044,20 @@ def build_generate_asset_preflight(
             task_outputs.get(key, []),
             key=lambda item: item["display_path"].casefold(),
         )
-        main_tasks = [
-            task for task in table_tasks if not task["is_full_refresh"]
-        ]
-        if (
-            record["asset_role"] in {"mid", "ads"}
-            and record["operational_layer"] not in {"DWD", "DWS"}
-            and not main_tasks
-        ):
-            errors.append(
-                _preflight_error(
-                    "execution_task_missing",
-                    table=record["short_name"],
-                    path=record["path"],
-                    message=(
-                        f"{record['operational_layer']} execution cannot be "
-                        "inferred without task SQL"
-                    ),
-                )
-            )
+        taskless_declaration = external_taskless_by_key.get(key)
+        producer_mode = (
+            "external"
+            if taskless_declaration is not None
+            or (record["asset_role"] == "ods" and not table_tasks)
+            else "task"
+        )
+        producer_reason = (
+            taskless_declaration.reason
+            if taskless_declaration is not None
+            else "ods_source_asset"
+            if producer_mode == "external"
+            else ""
+        )
         execution_asset = {
             "ddl": {
                 "columns": [
@@ -1028,6 +1073,8 @@ def build_generate_asset_preflight(
                 }
                 for task in table_tasks
             ],
+            "producer_mode": producer_mode,
+            "producer_reason": producer_reason,
         }
         execution = infer_execution_mapping(
             record["short_name"],
@@ -1068,10 +1115,14 @@ def build_generate_asset_preflight(
                 ),
                 target_model_path=_display_path(target_path),
                 existing_target_hash=_path_content_hash(target_path),
+                producer_mode=producer_mode,
+                producer_reason=producer_reason,
                 execution_contract_json=execution_json,
                 execution_evidence_hash=_json_hash(
                     {
                         "execution": execution,
+                        "producer_mode": producer_mode,
+                        "producer_reason": producer_reason,
                         "task_hashes": [
                             task["content_hash"] for task in table_tasks
                         ],

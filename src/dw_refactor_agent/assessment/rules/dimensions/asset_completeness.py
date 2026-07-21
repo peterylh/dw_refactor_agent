@@ -15,10 +15,43 @@ from dw_refactor_agent.assessment.scoped_plan import scoped_names
 from dw_refactor_agent.assessment.scoring.config import (
     ASSET_COMPLETENESS_RULES,
 )
+from dw_refactor_agent.config import (
+    PROJECT_CONFIG,
+    TasklessAssetConfigError,
+    parse_external_taskless_assets,
+)
 
 
 def _logical_task_key(task: TaskAsset) -> str:
     return task.expected_table or task.file
+
+
+def _taskless_rule_context(context: AssessmentContext) -> dict:
+    project_config = PROJECT_CONFIG.get(context.project) or {}
+    default_catalog = str(project_config.get("catalog") or "internal")
+    default_database = str(
+        project_config.get("db")
+        or (
+            context.assets.project_dir.name
+            if context.assets.project_dir is not None
+            else ""
+        )
+    )
+    try:
+        declarations = parse_external_taskless_assets(
+            project_config,
+            default_catalog=default_catalog,
+            default_database=default_database,
+        )
+    except TasklessAssetConfigError:
+        declarations = ()
+    return {
+        "default_catalog": default_catalog,
+        "default_database": default_database,
+        "external_taskless_identity_keys": frozenset(
+            declaration.match_key for declaration in declarations
+        ),
+    }
 
 
 def score_asset_completeness(
@@ -103,7 +136,7 @@ def score_asset_completeness(
             "ASSET_MODEL_HAS_DDL",
         ],
         table_targets,
-        {},
+        _taskless_rule_context(context),
     )
 
     task_only_targets = [

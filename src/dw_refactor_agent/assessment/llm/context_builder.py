@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import sqlglot
 import yaml
@@ -60,6 +60,25 @@ VERSION_CONTROL_COLUMN_NAMES = frozenset(
         "valid_to",
     }
 )
+
+
+class InspectionContextSetError(ValueError):
+    """Raised before inspection when the manifest target set is unsafe."""
+
+    code = "inspection_context_set_mismatch"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        expected: Iterable[str] = (),
+        actual: Iterable[str] = (),
+        table: str = "",
+    ):
+        super().__init__(message)
+        self.expected = tuple(expected)
+        self.actual = tuple(actual)
+        self.table = table
 
 
 def _short_table_name(table_name: str) -> str:
@@ -119,6 +138,17 @@ class _CanonicalTableLookup:
         if short_name not in self.ambiguous_short_names:
             return False
         return identity == short_name or identity not in self.by_identity
+
+    def get_with_unique_short_fallback(self, table_name: str, default=None):
+        """Resolve a qualified target through a unique short graph key."""
+        identity = _canonical_table_name(table_name)
+        if identity in self.by_identity:
+            return self.by_identity[identity]
+        short_name = _short_table_name(identity).casefold()
+        fallback_identity = self.unique_identity_by_short.get(short_name)
+        if fallback_identity is None:
+            return default
+        return self.by_identity[fallback_identity]
 
 
 def _canonical_table_lookup(
@@ -621,6 +651,7 @@ def build_contexts(
     use_model_metadata_asset_roles: bool = False,
     asset_content: dict[str, dict[str, str]] | None = None,
     business_semantics_catalog: dict | None = None,
+    inspection_targets: Iterable[str] | None = None,
 ) -> list[TableContext]:
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     use_project_asset_dirs = ddl_dir is None
@@ -689,6 +720,41 @@ def build_contexts(
         for table in lineage_data.get("tables", [])
         if table.get("name")
     )
+    lineage_table_names = set(dependency_table_names)
+    lineage_identity_lookup = _canonical_table_lookup(
+        {table_name: table_name for table_name in lineage_table_names},
+        ambiguous_short_names=_ambiguous_short_table_names(
+            lineage_table_names
+        ),
+    )
+    explicit_target_identities = (
+        tuple(
+            sorted(
+                {
+                    _canonical_table_name(table_name)
+                    for table_name in inspection_targets
+                    if _canonical_table_name(table_name)
+                }
+            )
+        )
+        if inspection_targets is not None
+        else None
+    )
+    if explicit_target_identities is not None:
+        for target_identity in explicit_target_identities:
+            canonical_target = _canonical_table_name(target_identity)
+            short_name = _short_table_name(canonical_target).casefold()
+            if (
+                canonical_target not in lineage_identity_lookup.by_identity
+                and short_name in lineage_identity_lookup.ambiguous_short_names
+            ):
+                raise InspectionContextSetError(
+                    "inspection target has ambiguous qualified lineage "
+                    f"candidates: {target_identity}",
+                    expected=explicit_target_identities,
+                    table=target_identity,
+                )
+        dependency_table_names.update(explicit_target_identities)
     ambiguous_short_names = _ambiguous_short_table_names(
         dependency_table_names
     )
@@ -798,6 +864,20 @@ def build_contexts(
         downstream_publication_feature_cache[canonical_name] = features
         return features
 
+    def dependency_values(
+        lookup: _CanonicalTableLookup,
+        table_name: str,
+    ):
+        if explicit_target_identities is not None:
+            return lookup.get_with_unique_short_fallback(table_name, set())
+        return lookup.get(table_name, set())
+
+    def lineage_identity(table_name: str) -> str:
+        return lineage_identity_lookup.get_with_unique_short_fallback(
+            table_name,
+            table_name,
+        )
+
     def get_depth_from_ods(table_name: str, visiting: set = None) -> int:
         canonical_name = _canonical_table_name(table_name)
         if visiting is None:
@@ -808,7 +888,7 @@ def build_contexts(
             return 0
         visiting.add(canonical_name)
 
-        parents = canonical_upstream.get(table_name, set())
+        parents = dependency_values(canonical_upstream, table_name)
         if not parents:
             short_name = _short_table_name(canonical_name).casefold()
             result = 0 if short_name.startswith("ods_") else 1
@@ -819,8 +899,16 @@ def build_contexts(
         memo[canonical_name] = result
         return result
 
-    for table in lineage_data.get("tables", []):
-        name = table["name"]
+    target_table_names = (
+        explicit_target_identities
+        if explicit_target_identities is not None
+        else tuple(
+            table["name"]
+            for table in lineage_data.get("tables", [])
+            if table.get("name")
+        )
+    )
+    for name in target_table_names:
         short_name = _short_table_name(name)
         model_entry = canonical_model_metadata.get(name)
         if canonical_model_metadata.has_ambiguous_fallback(name):
@@ -900,8 +988,10 @@ def build_contexts(
                 if task_path and task_path.exists()
                 else ""
             )
-        upstream_tables = sorted(canonical_upstream.get(name, set()))
-        downstream_tables = sorted(canonical_downstream.get(name, set()))
+        upstream_tables = sorted(dependency_values(canonical_upstream, name))
+        downstream_tables = sorted(
+            dependency_values(canonical_downstream, name)
+        )
         upstream_metric_groups = {}
         upstream_metric_group_status = {}
         for upstream_table in upstream_tables:
@@ -982,7 +1072,11 @@ def build_contexts(
                 downstream_entity_publication_features=(
                     downstream_entity_publication_features
                 ),
-                column_lineage=(lineage_view.column_lineage_for_table(name)),
+                column_lineage=(
+                    lineage_view.column_lineage_for_table(
+                        lineage_identity(name)
+                    )
+                ),
                 declared_data_domain=(
                     str((business_semantics or {}).get("data_domain") or "")
                     if layer in DATA_DOMAIN_LAYERS

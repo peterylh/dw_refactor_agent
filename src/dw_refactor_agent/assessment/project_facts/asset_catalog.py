@@ -52,6 +52,7 @@ class DdlAsset(_RecordMapping):
     path: Path | None
     file_stem: str | None
     declared_name: str
+    full_name: str = ""
     columns: list[dict] = field(default_factory=list)
     key_type: str = ""
     key_columns: list[str] = field(default_factory=list)
@@ -62,6 +63,7 @@ class DdlAsset(_RecordMapping):
         "path",
         "file_stem",
         "declared_name",
+        "full_name",
         "columns",
         "key_type",
         "key_columns",
@@ -76,6 +78,7 @@ class DdlAsset(_RecordMapping):
             path=Path(raw_path) if raw_path else None,
             file_stem=value.get("file_stem"),
             declared_name=str(value.get("declared_name") or ""),
+            full_name=str(value.get("full_name") or ""),
             columns=list(value.get("columns") or []),
             key_type=str(value.get("key_type") or ""),
             key_columns=list(value.get("key_columns") or []),
@@ -614,6 +617,7 @@ def build_asset_catalog(
                         path=ddl_path,
                         file_stem=ddl_path.stem,
                         declared_name=declared_name,
+                        full_name=str((table or {}).get("full_name") or ""),
                         columns=columns,
                         key_type=(table or {}).get("key_type", ""),
                         key_columns=list(

@@ -105,7 +105,7 @@ MODEL_FIELD_PATH_REGISTRY = (
     _rule(
         "execution.*",
         "operational",
-        sources=("task_sql", "asset_manifest"),
+        sources=("task_sql", "asset_manifest", "project_config"),
         validator="execution_contract",
     ),
     _rule(
@@ -464,6 +464,27 @@ def _validate_execution_contract(
 ) -> None:
     if not isinstance(value, dict):
         raise _error(source, "v3 execution must be a mapping")
+    mode = str(value.get("mode") or "task").strip().lower()
+    if mode not in {"task", "taskless"}:
+        raise _error(source, "v3 execution.mode must be task or taskless")
+    if mode == "taskless":
+        forbidden = sorted(
+            field
+            for field in (
+                "materialized",
+                "full_refresh_strategy",
+                "slice",
+                "historical_replay_supported",
+            )
+            if field in value
+        )
+        if forbidden:
+            raise _error(
+                source,
+                "v3 taskless execution cannot define task fields: "
+                + ", ".join(forbidden),
+            )
+        return
     materialized = str(value.get("materialized") or "").strip().lower()
     strategy = str(value.get("full_refresh_strategy") or "").strip().lower()
     if materialized not in {"incremental", "full"}:

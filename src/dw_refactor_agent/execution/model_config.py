@@ -26,6 +26,7 @@ ALLOWED_STRATEGIES = {
 }
 ALLOWED_PERIODS = {"D", "M", "W", "H"}
 EXECUTION_CONFIG_FIELDS = {"materialized", "full_refresh_strategy"}
+ALLOWED_EXECUTION_MODES = {"task", "taskless"}
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,28 @@ def execution_config_for_model(job_name: str, raw_model: dict) -> dict:
         return get_execution_contract(model)
     except UnsupportedModelGovernanceError as exc:
         raise ExecutionConfigError(f"[{job_name}] {exc}") from exc
+
+
+def normalize_execution_mode(job_name: str, value: Any) -> str:
+    """Normalize the execution ownership mode at every runtime boundary."""
+    mode = str(value or "task").strip().casefold()
+    if mode not in ALLOWED_EXECUTION_MODES:
+        allowed = ", ".join(sorted(ALLOWED_EXECUTION_MODES))
+        raise ExecutionConfigError(
+            f"[{job_name}] execution.mode must be one of: {allowed}"
+        )
+    return mode
+
+
+def require_runnable_execution(
+    job_name: str,
+    execution: Mapping[str, Any],
+) -> None:
+    """Reject a real task bound to a model owned by an external producer."""
+    if normalize_execution_mode(job_name, execution.get("mode")) == "taskless":
+        raise ExecutionConfigError(
+            f"[{job_name}] task SQL cannot bind to execution.mode=taskless"
+        )
 
 
 def normalize_materialized(job_name: str, value: Any) -> str:

@@ -4,6 +4,7 @@ import yaml
 import dw_refactor_agent.assessment.llm.context_builder as context_builder_module
 import dw_refactor_agent.config as config
 from dw_refactor_agent.assessment.llm.context_builder import (
+    InspectionContextSetError,
     build_contexts,
     extract_column_lineage,
     extract_dependencies,
@@ -49,6 +50,8 @@ def _build_contexts_for_graph(
     ddl_files=None,
     task_files=None,
     downstream=None,
+    inspection_targets=None,
+    asset_content=None,
 ):
     ddl_dir = tmp_path / "ddl"
     tasks_dir = tmp_path / "tasks"
@@ -86,7 +89,79 @@ def _build_contexts_for_graph(
         tasks_dir,
         model_metadata=model_metadata,
         metric_groups=metric_groups,
+        inspection_targets=inspection_targets,
+        asset_content=asset_content,
     )
+
+
+def test_build_contexts_uses_explicit_target_without_lineage(
+    tmp_path,
+    monkeypatch,
+):
+    contexts = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=[],
+        upstream={},
+        model_metadata={"dim_currency": {"layer": "DIM"}},
+        inspection_targets=["internal.demo.dim_currency"],
+        asset_content={
+            "dim_currency": {
+                "ddl": "CREATE TABLE demo.dim_currency (code VARCHAR(3));",
+                "etl_sql": "",
+            }
+        },
+    )
+
+    assert len(contexts) == 1
+    assert contexts[0].table_name == "dim_currency"
+    assert contexts[0].table_identity == "internal.demo.dim_currency"
+    assert contexts[0].ddl.startswith("CREATE TABLE")
+    assert contexts[0].etl_sql == ""
+
+
+def test_build_contexts_explicit_targets_are_exact_and_keep_short_lineage(
+    tmp_path,
+    monkeypatch,
+):
+    contexts = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=["dwd_orders", "dws_order_daily", "dws_unrelated"],
+        upstream={"dws_order_daily": {"dwd_orders"}},
+        model_metadata={
+            "dwd_orders": {"layer": "DWD"},
+            "dws_order_daily": {"layer": "DWS"},
+            "dws_unrelated": {"layer": "DWS"},
+        },
+        inspection_targets=["internal.demo.dws_order_daily"],
+    )
+
+    assert [context.table_identity for context in contexts] == [
+        "internal.demo.dws_order_daily"
+    ]
+    assert contexts[0].upstream_tables == ["dwd_orders"]
+
+
+def test_build_contexts_blocks_ambiguous_lineage_for_explicit_target(
+    tmp_path,
+    monkeypatch,
+):
+    with pytest.raises(
+        InspectionContextSetError,
+        match="ambiguous qualified lineage candidates",
+    ):
+        _build_contexts_for_graph(
+            tmp_path,
+            monkeypatch,
+            tables=[],
+            upstream={
+                "catalog_a.db_a.dim_currency": set(),
+                "catalog_b.db_b.dim_currency": set(),
+            },
+            model_metadata={"dim_currency": {"layer": "DIM"}},
+            inspection_targets=["internal.demo.dim_currency"],
+        )
 
 
 def test_extract_dependencies_collapses_transient_tables():

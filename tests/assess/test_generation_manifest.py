@@ -157,6 +157,8 @@ def test_manifest_is_immutable_and_frozen_inputs_drive_candidate(
         "task_content_hashes",
         "target_model_path",
         "existing_target_hash",
+        "producer_mode",
+        "producer_reason",
         "execution_contract",
         "execution_evidence_hash",
         "lineage_evidence_hash",
@@ -165,6 +167,7 @@ def test_manifest_is_immutable_and_frozen_inputs_drive_candidate(
     }
     assert first.manifest.to_dict()["assets"] == [asset.to_dict()]
     assert asset.canonical_identity == "internal.demo.dwd_orders"
+    assert asset.producer_mode == "task"
     assert asset.execution_contract() == {
         "materialized": "full",
         "full_refresh_strategy": "replace_all",
@@ -221,6 +224,221 @@ def test_manifest_is_immutable_and_frozen_inputs_drive_candidate(
     )
     assert first_plan.model_metadata == second_plan.model_metadata
     assert second_plan.model_metadata["dwd_orders"]["layer"] == "DWD"
+
+
+def test_external_taskless_ddl_only_table_can_complete_cold_start(
+    tmp_path,
+    monkeypatch,
+):
+    project = "manifest_external_taskless"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    ddl_path = project_dir / "mid" / "ddl" / "dim_currency.sql"
+    ddl_path.write_text(
+        "CREATE TABLE demo.dim_currency (currency_code VARCHAR(3));\n",
+        encoding="utf-8",
+    )
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "taskless_assets": [
+            {
+                "table": "internal.demo.dim_currency",
+                "producer": "external",
+                "reason": "maintained_by_reference_data_sync",
+            }
+        ]
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+    plan = plan_generate_model_metadata(
+        project,
+        _catalog_payload(),
+        replace_existing_models=True,
+        write_scope="all",
+        asset_manifest=preflight.manifest,
+    )
+    result = run_generate_model_metadata(project, dry_run=False)
+    saved = yaml.safe_load(
+        (project_dir / "mid" / "models" / "dim_currency.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert preflight.passed
+    asset = preflight.manifest.assets[0]
+    assert asset.producer_mode == "external"
+    assert asset.producer_reason == "maintained_by_reference_data_sync"
+    assert asset.execution_contract() == {"mode": "taskless"}
+    assert preflight.manifest.to_dict()["taskless_tables"] == [
+        {
+            "canonical_identity": "internal.demo.dim_currency",
+            "display_identity": "internal.demo.dim_currency",
+            "producer": "external",
+            "reason": "maintained_by_reference_data_sync",
+        }
+    ]
+    assert plan.model_metadata["dim_currency"]["execution"] == {
+        "mode": "taskless"
+    }
+    assert result["publication"]["status"] == "published_with_quarantine"
+    assert saved["execution"] == {"mode": "taskless"}
+
+
+@pytest.mark.parametrize(
+    "taskless_assets,error_type",
+    [
+        ({}, "taskless_asset_config_invalid"),
+        (
+            [
+                {
+                    "table": "dim_currency",
+                    "producer": "external",
+                    "reason": "sync",
+                }
+            ],
+            "taskless_asset_config_invalid",
+        ),
+        (
+            [
+                {
+                    "table": "internal.demo.unknown_table",
+                    "producer": "external",
+                    "reason": "sync",
+                }
+            ],
+            "taskless_asset_missing_ddl",
+        ),
+    ],
+)
+def test_external_taskless_declaration_fails_closed(
+    tmp_path,
+    monkeypatch,
+    taskless_assets,
+    error_type,
+):
+    project = "manifest_external_invalid"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    (project_dir / "mid" / "ddl" / "dim_currency.sql").write_text(
+        "CREATE TABLE demo.dim_currency (currency_code VARCHAR(3));\n",
+        encoding="utf-8",
+    )
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "taskless_assets": taskless_assets
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+
+    assert not preflight.passed
+    assert error_type in _error_types(preflight)
+
+
+def test_external_taskless_declaration_rejects_task_binding(
+    tmp_path,
+    monkeypatch,
+):
+    project = "manifest_external_task_conflict"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    _write_managed_table(project_dir, "dim_currency")
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "taskless_assets": [
+            {
+                "table": "internal.demo.dim_currency",
+                "producer": "external",
+                "reason": "sync",
+            }
+        ]
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+
+    assert not preflight.passed
+    assert "execution_task_binding_conflict" in _error_types(preflight)
+
+
+def test_taskless_declaration_does_not_allow_orphan_full_refresh_task(
+    tmp_path,
+    monkeypatch,
+):
+    project = "manifest_external_orphan_companion"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    (project_dir / "mid" / "ddl" / "dim_currency.sql").write_text(
+        "CREATE TABLE demo.dim_currency (currency_code VARCHAR(3));\n",
+        encoding="utf-8",
+    )
+    full_refresh_dir = project_dir / "mid" / "tasks" / "full_refresh"
+    full_refresh_dir.mkdir()
+    (full_refresh_dir / "dim_currency_full_refresh.sql").write_text(
+        "INSERT INTO demo.dim_currency SELECT 'CNY';\n",
+        encoding="utf-8",
+    )
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "taskless_assets": [
+            {
+                "table": "internal.demo.dim_currency",
+                "producer": "external",
+                "reason": "sync",
+            }
+        ]
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+
+    assert not preflight.passed
+    assert {
+        "execution_main_task_missing",
+        "execution_task_binding_conflict",
+    }.issubset(_error_types(preflight))
+
+
+def test_generate_returns_structured_block_for_inspection_target_mismatch(
+    tmp_path,
+    monkeypatch,
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+    from dw_refactor_agent.assessment.llm.context_builder import (
+        InspectionContextSetError,
+    )
+
+    project = "manifest_external_context_mismatch"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    (project_dir / "mid" / "ddl" / "dim_currency.sql").write_text(
+        "CREATE TABLE demo.dim_currency (currency_code VARCHAR(3));\n",
+        encoding="utf-8",
+    )
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "taskless_assets": [
+            {
+                "table": "internal.demo.dim_currency",
+                "producer": "external",
+                "reason": "sync",
+            }
+        ]
+    }
+
+    def mismatched_context(*_args, **_kwargs):
+        raise InspectionContextSetError(
+            "inspection_context_set_mismatch: missing dim_currency",
+            expected=["internal.demo.dim_currency"],
+        )
+
+    monkeypatch.setattr(
+        writer_module, "run_metadata_write", mismatched_context
+    )
+
+    result = run_generate_model_metadata(
+        project,
+        api_key="test",
+        dry_run=True,
+    )
+
+    assert result["publication"]["candidate_status"] == "blocked"
+    assert result["publication"]["validation"]["errors"] == [
+        {
+            "type": "inspection_context_set_mismatch",
+            "table": "",
+            "message": (
+                "inspection_context_set_mismatch: missing dim_currency"
+            ),
+        }
+    ]
 
 
 def test_preflight_uses_current_sql_for_transient_and_stale_lineage(

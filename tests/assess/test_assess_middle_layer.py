@@ -60,6 +60,7 @@ def _context(
     edges=None,
     indirect_edges=None,
     assets=None,
+    project="assessment",
 ):
     if tables:
         table_models = {
@@ -86,6 +87,7 @@ def _context(
         metadata.setdefault("version", 2)
         metadata.setdefault("name", table_name)
     return AssessmentContext.from_facts(
+        project=project,
         tables=tables or [],
         edges=edges or [],
         indirect_edges=indirect_edges or [],
@@ -1076,6 +1078,78 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
         "outputs": ["dws_missing"],
         "lineage_targets": [],
     }
+
+
+def test_score_asset_completeness_requires_external_taskless_declaration(
+    tmp_path,
+    monkeypatch,
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "ddl" / "dim_currency.sql").write_text(
+        "CREATE TABLE analytics.reference_db.dim_currency (code VARCHAR(3));",
+        encoding="utf-8",
+    )
+    model = {
+        "version": 2,
+        "name": "dim_currency",
+        "layer": "DIM",
+        "execution": {"mode": "taskless"},
+    }
+    (project_dir / "mid" / "models" / "dim_currency.yaml").write_text(
+        yaml.safe_dump(model, sort_keys=False),
+        encoding="utf-8",
+    )
+    catalog = build_asset_catalog(
+        [],
+        {"dim_currency": model},
+        project_dir,
+        edges=[],
+        indirect_edges=[],
+    )
+    project = "taskless_assessment"
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": "demo",
+            "catalog": "internal",
+            "db": "demo",
+            "execution": {
+                "taskless_assets": [
+                    {
+                        "table": ("analytics.reference_db.dim_currency"),
+                        "producer": "external",
+                        "reason": "reference_sync",
+                    }
+                ]
+            },
+        },
+    )
+
+    result = score_asset_completeness(
+        _context(assets=catalog, project=project)
+    )
+
+    assert catalog["tables"]["dim_currency"]["ddl"]["full_name"] == (
+        "analytics.reference_db.dim_currency"
+    )
+    assert not any(
+        issue["rule_id"] == "ASSET_EXECUTABLE_DDL_HAS_TASK"
+        for issue in result["issues"]
+    )
+
+    config.PROJECT_CONFIG[project]["execution"] = {}
+    stale_model_result = score_asset_completeness(
+        _context(assets=catalog, project=project)
+    )
+
+    assert any(
+        issue["rule_id"] == "ASSET_EXECUTABLE_DDL_HAS_TASK"
+        for issue in stale_model_result["issues"]
+    )
 
 
 def test_score_asset_completeness_ignores_dropped_ctas_temp_tables(tmp_path):

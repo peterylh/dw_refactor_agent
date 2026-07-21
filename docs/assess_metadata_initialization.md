@@ -109,6 +109,24 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 `incremental`，并从目标表 DELETE 条件提取 `execution.slice`；存在 full-refresh
 伴随任务时使用 `companion`，否则使用 `replay_slices`。
 
+如果某个受管 MID/ADS DDL 由仓库外部系统维护、因此没有本地 task SQL，必须在
+`warehouse.yaml` 中用完整 identity 显式声明 external producer：
+
+```yaml
+execution:
+  taskless_assets:
+    - table: internal.demo_dm.dim_currency
+      producer: external
+      reason: maintained_by_upstream_sync
+```
+
+声明后的表仍属于完整 managed model set，生成的正式执行合同为
+`execution: {mode: taskless}`。它可以照常接受 LLM 巡检和事务发布，即使没有 lineage；不会
+进入本地 task 调度。未声明的非 ODS 零 task DDL 仍以 `execution_task_missing` 阻断，声明表
+一旦出现真实 task 则以 `execution_task_binding_conflict` 阻断。当前只支持
+`producer: external`，短表名、重复 identity、空 reason 和无对应 DDL 的声明都会在调用 LLM
+前失败。ODS 作为外部装载边界无需逐表声明，零 task 时同样生成 `mode: taskless`。
+
 LLM 结果先经过 typed recovery 和 section-aware decision。单表业务语义、实体/grain 或指标
 不完整时，只隔离受影响 section；默认仍发布完整的 v3 managed model set，状态为
 `published_with_quarantine`。正式 model 中被隔离 section 的字段会被删除，详细候选只保留在

@@ -99,6 +99,11 @@ from .semantics import (
     load_business_semantics_catalog_from_dir,
     semantic_subjects_path,
 )
+from .taskless_assets import (
+    ExternalTasklessAsset,
+    TasklessAssetConfigError,
+    parse_external_taskless_assets,
+)
 
 _CORE_EXPORTS = {
     "DB_ENV_CONFIG",
@@ -138,6 +143,7 @@ __all__ = [
     "DORIS_USER",
     "DEFAULT_PROJECT_ROOT",
     "DomainDef",
+    "ExternalTasklessAsset",
     "GOVERNANCE_REASON_CODES",
     "GovernedModelMetadata",
     "LAYER_ORDER",
@@ -160,6 +166,7 @@ __all__ = [
     "TEXT_ENCODING",
     "WAREHOUSES_ROOT",
     "TypeDef",
+    "TasklessAssetConfigError",
     "UnavailableModelSection",
     "UnavailableModelSectionUsageError",
     "UnsupportedModelGovernanceError",
@@ -223,6 +230,7 @@ __all__ = [
     "project_ods_source_catalog_dialects",
     "python_module_env",
     "project_task_dirs",
+    "parse_external_taskless_assets",
     "refactor_runs_dir",
     "resolve_project_root",
     "semantic_subjects_path",

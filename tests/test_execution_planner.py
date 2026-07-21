@@ -167,6 +167,27 @@ def test_task_spec_validates_slice_against_model_name_ddl(
         )
 
 
+@pytest.mark.parametrize("mode", ["taskless", " TaSkLeSs "])
+def test_task_spec_rejects_task_bound_to_taskless_model(
+    monkeypatch,
+    tmp_path,
+    mode,
+):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config=f"execution:\n  mode: {mode!r}\n",
+        warehouse_execution="",
+    )
+    planner = ExecutionPlanner("demo")
+
+    with pytest.raises(
+        ExecutionConfigError,
+        match="task SQL cannot bind to execution.mode=taskless",
+    ):
+        planner.task_spec("dwd_orders", sql_path)
+
+
 def test_task_spec_matches_execution_model_name_case_insensitively(
     monkeypatch, tmp_path
 ):
