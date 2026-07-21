@@ -24,6 +24,10 @@ _src_root = Path(__file__).resolve().parents[3]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
+from dw_refactor_agent.assessment.llm.generation_candidate_resolver import (
+    prepare_inspection_for_propagation,
+    resolve_generation_candidate,
+)
 from dw_refactor_agent.assessment.llm.generation_contract import (
     validate_generate_candidate,
 )
@@ -594,6 +598,61 @@ def run_generate_model_metadata(
             llm_result=llm_result,
             catalog=confirmed_catalog,
         )
+        resolved_candidate = None
+        effective_model_metadata = final_model_metadata
+        if llm_result is not None:
+            resolved_candidate = resolve_generation_candidate(
+                final_model_metadata,
+                inspection_reports=llm_result.get("tables") or [],
+                catalog=confirmed_catalog,
+                operational_layers={
+                    asset.short_name: asset.operational_layer
+                    for asset in preflight.manifest.assets
+                },
+                expected_tables=[
+                    asset.short_name for asset in preflight.manifest.assets
+                ],
+                validation_assets=preflight.manifest.validation_assets(),
+                generation_issues=publication_validation.get("issues") or [],
+                local_decisions=(
+                    llm_result.get("local_section_decisions") or []
+                ),
+                lineage_data=preflight.manifest.lineage_data(),
+            )
+            effective_model_metadata = resolved_candidate.models
+            if resolved_candidate.status in {"blocked", "quarantined"}:
+                candidate_errors = (
+                    resolved_candidate.validation.get("errors") or []
+                )
+                if resolved_candidate.status == "quarantined":
+                    candidate_errors = [
+                        {
+                            "type": "quarantine_candidate_not_publishable",
+                            "table": table_name,
+                            "message": (
+                                "formal publication of quarantined generation "
+                                "candidates is not enabled"
+                            ),
+                        }
+                        for table_name in resolved_candidate.quarantined_tables
+                    ]
+                publication_validation = {
+                    "status": "blocked",
+                    "stage": (
+                        "quarantine_publication_gate"
+                        if resolved_candidate.status == "quarantined"
+                        else "effective_candidate"
+                    ),
+                    "error_count": len(candidate_errors),
+                    "errors": candidate_errors,
+                    "issues": [],
+                    "blocked_tables": list(
+                        resolved_candidate.quarantined_tables
+                        if resolved_candidate.status == "quarantined"
+                        else resolved_candidate.hard_blocked_tables
+                    ),
+                    "reinspection_tables": [],
+                }
         (
             candidate_table_names,
             candidate_declared_names,
@@ -697,7 +756,7 @@ def run_generate_model_metadata(
         else load_model_metadata(project)
     )
     published_catalog = confirmed_catalog if should_publish else catalog
-    candidate_model_summary = _model_metadata_summary(final_model_metadata)
+    candidate_model_summary = _model_metadata_summary(effective_model_metadata)
     published_model_summary = _model_metadata_summary(published_model_metadata)
     candidate_catalog_summary = _catalog_metadata_summary(confirmed_catalog)
     published_catalog_summary = _catalog_metadata_summary(published_catalog)
@@ -745,10 +804,31 @@ def run_generate_model_metadata(
             confirmed_catalog
         ),
         "published_catalog_summary": published_catalog_summary,
+        "candidate_resolution": (
+            resolved_candidate.report()
+            if resolved_candidate is not None
+            else {
+                "status": "not_run",
+                "complete": True,
+                "fixed_point_iterations": 0,
+                "quarantined_table_count": 0,
+                "quarantined_tables": [],
+                "hard_blocked_table_count": 0,
+                "hard_blocked_tables": [],
+                "section_decisions": [],
+                "propagation_provenance": [],
+                "effective_inspections": [],
+                "validation": {
+                    "status": "not_run",
+                    "error_count": 0,
+                    "errors": [],
+                },
+            }
+        ),
         "candidate_models": (
             {
                 table_name: dict(metadata)
-                for table_name, metadata in final_model_metadata.items()
+                for table_name, metadata in effective_model_metadata.items()
             }
             if publication_blocked or dry_run
             else {}
@@ -1240,6 +1320,27 @@ def run_metadata_write(
         inspector.progress_callback = build_progress_callback()
     inspector.result_callback = result_callback
 
+    local_decisions = {}
+    local_proposal_results = {}
+
+    def resolve_local_result(result: TableInspectResult) -> TableInspectResult:
+        matching_models = [
+            metadata
+            for table_name, metadata in plan.base_model_metadata.items()
+            if table_name.casefold() == result.table_name.casefold()
+        ]
+        metadata = matching_models[0] if len(matching_models) == 1 else {}
+        local_proposal_results.setdefault(
+            result.table_name.casefold(), copy.deepcopy(result)
+        )
+        effective_result, decision = prepare_inspection_for_propagation(
+            result,
+            metadata=metadata,
+            catalog=base_catalog,
+        )
+        local_decisions[result.table_name.casefold()] = decision
+        return effective_result
+
     inspection = run_inspection_pipeline(
         project,
         data,
@@ -1269,6 +1370,9 @@ def run_metadata_write(
         ),
         asset_content=asset_content,
         business_semantics_catalog=business_semantics_catalog,
+        local_result_resolver=(
+            resolve_local_result if plan.mode == "generate" else None
+        ),
         result_layer_resolver=lambda _ctx, result: layer_for_model(
             result,
             existing_model=(plan.base_model_metadata or {}).get(
@@ -1304,7 +1408,16 @@ def run_metadata_write(
     catalog_update_report = _merge_llm_catalog_discoveries(
         project,
         llm_result=None,
-        inspection_results=results,
+        inspection_results=(
+            [
+                result
+                for _table_key, result in sorted(
+                    local_proposal_results.items()
+                )
+            ]
+            if plan.mode == "generate"
+            else results
+        ),
         base_catalog=base_catalog,
         model_metadata=plan.base_model_metadata,
         resolution_policy=plan.resolution_policy,
@@ -1357,6 +1470,10 @@ def run_metadata_write(
             len(report.get("metadata_warnings") or []) for report in reports
         ),
         "tables": reports,
+        "local_section_decisions": [
+            decision.to_dict()
+            for _table_key, decision in sorted(local_decisions.items())
+        ],
         "model_updates": yaml_updates,
         "model_update_count": len(
             [update for update in yaml_updates if update.get("updated")]

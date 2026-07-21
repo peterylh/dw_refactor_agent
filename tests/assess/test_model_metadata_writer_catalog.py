@@ -204,6 +204,16 @@ def test_run_generate_model_metadata_only_proposes_new_catalog_codes(
     assert result["catalog_proposal_count"] == 2
     assert result["publication"]["status"] == "blocked"
     assert result["publication"]["published"] is False
+    assert result["publication"]["validation"]["stage"] == (
+        "quarantine_publication_gate"
+    )
+    assert result["candidate_resolution"]["status"] == "quarantined"
+    assert result["candidate_resolution"]["quarantined_table_count"] == 2
+    assert all(
+        set(model["governance"]["withheld_sections"])
+        == set(config.MODEL_SECTIONS)
+        for model in result["candidate_models"].values()
+    )
     assert catalog["business_processes"] == []
     assert catalog["semantic_subjects"] == []
     assert not (project_dir / "mid/models/dwd_order_detail.yaml").exists()
@@ -524,12 +534,14 @@ def _write_single_writer_project(
     mid_task_dir.mkdir(parents=True, exist_ok=True)
     for table_name in mid_tables:
         (mid_ddl_dir / f"{table_name}.sql").write_text(
-            f"CREATE TABLE {table_name} (id BIGINT);\n",
+            f"CREATE TABLE {table_name} "
+            "(id BIGINT, order_count BIGINT, sale_amount BIGINT, "
+            "subtotal BIGINT);\n",
             encoding="utf-8",
         )
         (mid_task_dir / f"{table_name}.sql").write_text(
             f"TRUNCATE TABLE {table_name};\n"
-            f"INSERT INTO {table_name} SELECT 1;\n",
+            f"INSERT INTO {table_name} SELECT 1, 1, 1, 1;\n",
             encoding="utf-8",
         )
     if include_ods_ads:

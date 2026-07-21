@@ -484,9 +484,11 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     assert "final_accuracy" not in project
     assert project["llm_middle_accuracy"] == 1.0
     assert project["post_retry_middle_accuracy"] == 1.0
-    assert project["metric_count"] == 2
-    assert project["entity_table_count"] == 1
-    assert project["grain_table_count"] == 1
+    assert project["metric_count"] == 0
+    assert project["entity_table_count"] == 0
+    assert project["grain_table_count"] == 0
+    assert project["candidate_resolution_status"] == "quarantined"
+    assert project["quarantined_model_count"] == 3
     assert project["publication_status"] == "blocked"
     assert project["published"] is False
     assert project["publication_error_count"] > 0
@@ -503,10 +505,8 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     )
     assert project["final_layer_counts"] == {
         "ADS": 1,
-        "DIM": 1,
-        "DWD": 1,
-        "DWS": 1,
         "ODS": 1,
+        "QUARANTINED": 3,
     }
     assert project["mismatches"] == []
     assert project["first_attempt_mismatches"] == []

@@ -272,13 +272,41 @@ def _resolved_catalog_results_from_llm_result(
     model_metadata: dict[str, dict[str, Any]],
     resolution_policy: LayerResolutionPolicy,
 ) -> list[TableInspectResult]:
+    decisions_by_table = {
+        str(decision.get("table") or "").casefold(): decision
+        for decision in llm_result.get("local_section_decisions") or []
+        if isinstance(decision, dict)
+    }
+    proposal_only_issue_codes = {
+        "business_process_unknown",
+        "semantic_subject_unknown",
+    }
     results = []
     for item in llm_result.get("tables") or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("status") or "").strip().lower() == "blocked":
+        table_key = str(item.get("table_name") or "").casefold()
+        local_decision = decisions_by_table.get(table_key)
+        if local_decision is not None:
+            issue_codes = {
+                str(issue.get("code") or "")
+                for issue in local_decision.get("issues") or []
+                if isinstance(issue, dict)
+            }
+            if issue_codes - proposal_only_issue_codes:
+                continue
+        elif str(item.get("status") or "").strip().lower() == "blocked":
             continue
-        results.append(inspect_dict_to_result(item))
+        recovered = item.get("recovered_candidate")
+        recovered_payload = (
+            recovered.get("payload") if isinstance(recovered, dict) else None
+        )
+        inspection_payload = dict(item)
+        if isinstance(recovered_payload, dict):
+            inspection_payload.update(recovered_payload)
+            inspection_payload["validation"] = {}
+            inspection_payload["issues"] = []
+        results.append(inspect_dict_to_result(inspection_payload))
     return _resolved_catalog_results_from_inspection_results(
         results,
         model_metadata=model_metadata,

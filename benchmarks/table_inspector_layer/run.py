@@ -822,8 +822,21 @@ def _llm_layers(
             ):
                 layers[table] = "FAILED"
                 continue
+            recovered = table_result.get("recovered_candidate")
+            recovered_payload = (
+                recovered.get("payload")
+                if isinstance(recovered, dict)
+                else None
+            )
+            recovered_layer = (
+                recovered_payload.get("inferred_layer")
+                if field == "inferred_layer"
+                and isinstance(recovered_payload, dict)
+                else None
+            )
             layers[table] = str(
-                table_result.get(field)
+                recovered_layer
+                or table_result.get(field)
                 or table_result.get("inferred_layer")
                 or "MISSING"
             ).upper()
@@ -1025,7 +1038,13 @@ def _summarize_project(
             continue
         expected_layer = str(expected.get("layer") or "OTHER").upper()
         final_model = candidate_models.get(target_table, {})
-        final_layer = str(final_model.get("layer") or "MISSING").upper()
+        governance = final_model.get("governance") or {}
+        withheld = set(governance.get("withheld_sections") or [])
+        final_layer = (
+            "QUARANTINED"
+            if "classification" in withheld
+            else str(final_model.get("layer") or "MISSING").upper()
+        )
         first_attempt_layer = first_attempt_layers.get(target_table, "NOT_RUN")
         post_retry_layer = post_retry_layers.get(target_table, "NOT_RUN")
 
@@ -1078,6 +1097,11 @@ def _summarize_project(
         if isinstance(publication.get("validation"), dict)
         else {}
     )
+    candidate_resolution = (
+        result.get("candidate_resolution")
+        if isinstance(result.get("candidate_resolution"), dict)
+        else {}
+    )
     return {
         "source_project": temp_project.source_project,
         "target_project": temp_project.target_project,
@@ -1109,6 +1133,18 @@ def _summarize_project(
         "catalog_proposal_conflict_count": int(
             result.get("catalog_proposal_conflict_count") or 0
         ),
+        "candidate_resolution_status": str(
+            candidate_resolution.get("status") or "not_run"
+        ),
+        "quarantined_model_count": int(
+            candidate_resolution.get("quarantined_table_count") or 0
+        ),
+        "section_decisions": candidate_resolution.get("section_decisions")
+        or [],
+        "propagation_provenance": candidate_resolution.get(
+            "propagation_provenance"
+        )
+        or [],
         "llm_middle_correct_count": llm_middle_correct,
         "llm_middle_accuracy": (
             llm_middle_correct / middle_count if middle_count else 0.0

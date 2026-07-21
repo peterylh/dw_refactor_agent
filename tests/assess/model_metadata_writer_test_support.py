@@ -138,12 +138,15 @@ def _write_catalog_project(
     task_dir.mkdir(parents=True, exist_ok=True)
     for table_name in ddl_tables:
         (ddl_dir / f"{table_name}.sql").write_text(
-            (f"CREATE TABLE {table_name} (id BIGINT, customer_id BIGINT);\n"),
+            (
+                f"CREATE TABLE {table_name} "
+                "(id BIGINT, customer_id BIGINT, subtotal BIGINT);\n"
+            ),
             encoding="utf-8",
         )
         (task_dir / f"{table_name}.sql").write_text(
             f"TRUNCATE TABLE {table_name};\n"
-            f"INSERT INTO {table_name} SELECT 1, 1;\n",
+            f"INSERT INTO {table_name} SELECT 1, 1, 1;\n",
             encoding="utf-8",
         )
     if models:

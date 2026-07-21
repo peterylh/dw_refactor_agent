@@ -124,6 +124,7 @@ ResultEnricher = Callable[
 ]
 MetricResultEligibility = Callable[[TableInspectResult], bool]
 ResultLayerResolver = Callable[[TableContext, TableInspectResult], str]
+LocalResultResolver = Callable[[TableInspectResult], TableInspectResult]
 
 
 def build_refresh_plan(project: str, *, write_scope: str) -> MetadataFlowPlan:
@@ -187,6 +188,7 @@ def run_inspection_pipeline(
     result_layer_resolver: Optional[ResultLayerResolver] = None,
     asset_content: Optional[Dict[str, Dict[str, str]]] = None,
     business_semantics_catalog: Optional[Dict[str, Any]] = None,
+    local_result_resolver: Optional[LocalResultResolver] = None,
 ) -> InspectionResultBundle:
     contexts = build_contexts(
         project,
@@ -204,6 +206,10 @@ def run_inspection_pipeline(
     # declared context layer cannot be used to decide which tables receive
     # newly discovered upstream metric groups.
     initial_results = inspector.inspect_batch(contexts)
+    if local_result_resolver is not None:
+        initial_results = [
+            local_result_resolver(result) for result in initial_results
+        ]
     final_pairs = list(zip(contexts, initial_results))
     if _promote_upstream_metrics_from_consumer_evidence(
         final_pairs,
@@ -227,6 +233,11 @@ def run_inspection_pipeline(
             propagation_converged = True
             break
         reinspection_results = inspector.inspect_batch(contexts_to_reinspect)
+        if local_result_resolver is not None:
+            reinspection_results = [
+                local_result_resolver(result)
+                for result in reinspection_results
+            ]
         final_pairs = _merge_reinspection_results(
             final_pairs,
             contexts_to_reinspect,
