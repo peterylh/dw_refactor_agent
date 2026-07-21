@@ -24,6 +24,7 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspector,
     TableInspectResult,
     parse_response,
+    validate_inspection_result,
 )
 from tests.assess.model_metadata_writer_test_support import (
     _catalog_payload,
@@ -766,7 +767,6 @@ def _seed_resumable_checkpoint(
     project_dir,
     plan,
     *,
-    resume_eligible=True,
     catalog_snapshot_hash="",
     asset_manifest_hash="",
 ):
@@ -777,7 +777,6 @@ def _seed_resumable_checkpoint(
         asset_manifest_hash=asset_manifest_hash,
     )
     result = _lossless_checkpoint_result(context, inspector)
-    result.resume_eligible = resume_eligible
     checkpoint = GenerateModelCheckpoint(
         project,
         project_dir=project_dir,
@@ -898,6 +897,64 @@ def test_generate_checkpoint_records_processed_inspection_status(
     assert manifest["tables"]["dwd_first"]["validation"][
         "resolution_requires_reinspection"
     ]
+
+
+def test_generate_checkpoint_resumes_non_retryable_semantic_quarantine(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_quarantine_resume"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    context = _checkpoint_context()
+    inspector = TableInspector(
+        api_key="test",
+        max_retries=0,
+        validate_publication_contract=True,
+    )
+    result = _lossless_checkpoint_result(context, inspector)
+    validate_inspection_result(
+        result,
+        context,
+        validate_publication_contract=True,
+    )
+    first = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+
+    first.write_inspection_result(result)
+
+    assert first.report()["resume_candidate_kind_counts"] == {
+        "semantic_quarantine": 1
+    }
+    first.close()
+
+    second = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    resumed = TableInspector(
+        api_key="test",
+        max_retries=0,
+        resume_cache=second.resume_cache(),
+        validate_publication_contract=True,
+    )
+    api = pytest.fail
+    monkeypatch.setattr(
+        resumed,
+        "_call_api",
+        lambda _prompt: api("checkpoint quarantine unexpectedly called API"),
+    )
+
+    replayed = resumed.inspect(context)
+
+    assert replayed.reuse_source == "checkpoint"
+    assert replayed.status == "blocked"
+    assert [issue.code for issue in replayed.issues] == [
+        "business_process_missing"
+    ]
+    second.close()
 
 
 def test_generate_checkpoint_resumes_successful_prompt_variants_only(
@@ -1091,16 +1148,8 @@ def test_generate_checkpoint_invalidates_publication_rejected_variant(
         cache_file=cache_file,
         max_retries=0,
     )
-    result = TableInspectResult(
-        table_name=context.table_name,
-        declared_layer=context.layer,
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    context_hash = seed_inspector._compute_hash(context)
-    result.context_hash = context_hash
+    result = _lossless_checkpoint_result(context, seed_inspector)
+    context_hash = result.context_hash
     seed_inspector._store_cached_result(
         context.table_name,
         context_hash,
@@ -1141,6 +1190,9 @@ def test_generate_checkpoint_invalidates_publication_rejected_variant(
     assert resume_cache["dwd_first"] == {
         "variants": {},
         "invalid_context_hashes": [context_hash],
+        "invalidation_reasons": {
+            context_hash: "publication_rejected",
+        },
     }
     resumed_inspector = TableInspector(
         api_key="test",
@@ -1275,17 +1327,22 @@ def test_generate_checkpoint_safely_invalidates_legacy_manifest(
     recovered.close()
 
 
-def test_generate_checkpoint_retries_non_cacheable_fallback_result(
+def test_generate_checkpoint_rejects_legacy_non_resumable_variant(
     tmp_path, monkeypatch
 ):
-    project = "generate_checkpoint_retry_fallback"
+    project = "generate_checkpoint_legacy_non_resumable"
     project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
-    _seed_resumable_checkpoint(
-        project,
-        project_dir,
-        plan,
-        resume_eligible=False,
+    _seed_resumable_checkpoint(project, project_dir, plan)
+    manifest_path = project_dir / "mid_checkpoints" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["version"] = 5
+    variant = next(
+        iter(manifest["tables"]["dwd_first"]["inspection_variants"].values())
     )
+    variant["resume_eligible"] = False
+    variant.pop("reuse_kind", None)
+    variant.pop("invalidation_reason", None)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     recovered = GenerateModelCheckpoint(
         project,
@@ -1296,6 +1353,9 @@ def test_generate_checkpoint_retries_non_cacheable_fallback_result(
     resume_entry = recovered.resume_cache()["dwd_first"]
     assert resume_entry["variants"] == {}
     assert len(resume_entry["invalid_context_hashes"]) == 1
+    assert set(resume_entry["invalidation_reasons"].values()) == {
+        "legacy_marked_non_resumable"
+    }
     assert recovered.report()["resume_candidate_variant_count"] == 0
     recovered.close()
 

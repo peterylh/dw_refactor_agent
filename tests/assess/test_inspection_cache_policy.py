@@ -155,6 +155,74 @@ def test_policy_change_replays_lossless_candidate_without_api(tmp_path):
     assert restored.reuse_source == "cache"
     assert restored.table_type == "fact"
     assert restored.status == "passed"
+    assert inspector.reuse_report()["policy_replays_by_version"] == {
+        "recovery_version": 1,
+        "schema_version": 1,
+    }
+
+
+def test_non_retryable_semantic_quarantine_reuses_lossless_payload(tmp_path):
+    cache_file = tmp_path / "inspect.json"
+    first = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+        validate_publication_contract=True,
+        **FINGERPRINTS,
+    )
+    first._call_api = Mock(return_value=_response())
+
+    quarantined = first.inspect(_context())
+
+    assert quarantined.status == "blocked"
+    assert quarantined.resume_eligible is True
+    assert [issue.code for issue in quarantined.issues] == [
+        "business_process_missing"
+    ]
+    first_payload = result_to_cache_dict(quarantined)
+
+    resumed = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+        validate_publication_contract=True,
+        **FINGERPRINTS,
+    )
+    api = Mock(side_effect=AssertionError("quarantine reuse called API"))
+    resumed._call_api = api
+
+    replayed = resumed.inspect(_context())
+
+    api.assert_not_called()
+    assert replayed.status == "blocked"
+    assert replayed.reuse_source == "cache"
+    assert result_to_cache_dict(replayed) == first_payload
+    assert resumed.reuse_report()["hits_by_kind"] == {"semantic_quarantine": 1}
+
+
+def test_unsettled_propagation_removes_previously_cached_quarantine(tmp_path):
+    cache_file = tmp_path / "inspect.json"
+    context = _context()
+    inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+        validate_publication_contract=True,
+        **FINGERPRINTS,
+    )
+    inspector._call_api = Mock(return_value=_response())
+    result = inspector.inspect(context)
+    result.validation["metric_propagation_not_converged"] = [
+        context.table_name
+    ]
+
+    inspector.persist_finalized_results([(context, result)])
+
+    assert result.resume_eligible is False
+    assert [issue.code for issue in result.issues][-1] == (
+        "metric_propagation_not_converged"
+    )
+    assert json.loads(cache_file.read_text(encoding="utf-8")) == {}
 
 
 @pytest.mark.parametrize(
@@ -166,6 +234,7 @@ def test_policy_change_replays_lossless_candidate_without_api(tmp_path):
         "content_hash",
         "root_list",
         "nan_result",
+        "low_confidence",
     ],
 )
 def test_unsafe_cache_variant_retries_instead_of_restoring_passed(
@@ -191,6 +260,9 @@ def test_unsafe_cache_variant_retries_instead_of_restoring_passed(
                 payload["cache_policy"]["parser_schema_version"] = (
                     PARSER_SCHEMA_VERSION + 1
                 )
+            elif mutation == "low_confidence":
+                payload["confidence"] = 0.2
+                payload["parsed_candidate"]["payload"]["confidence"] = 0.2
             else:
                 payload["validation"]["future_validation"] = ["unsafe"]
 

@@ -17,7 +17,9 @@ from urllib.parse import urlparse
 from dw_refactor_agent.assessment.llm.context_builder import TableContext
 from dw_refactor_agent.assessment.llm.inspection_cache_policy import (
     InspectionCachePolicy,
+    InspectionReuseStats,
     InvalidInspectionCacheError,
+    inspection_reuse_decision,
 )
 from dw_refactor_agent.assessment.llm.inspection_contract import (
     validate_generate_inspection_contract,
@@ -2151,6 +2153,7 @@ class TableInspector:
             validate_publication_contract
         )
         self._cache_lock = threading.RLock()
+        self._reuse_stats = InspectionReuseStats()
         self.progress_callback: Callable[[dict[str, Any]], None] | None = None
         self.result_callback: Callable[[TableInspectResult], None] | None = (
             None
@@ -2179,6 +2182,10 @@ class TableInspector:
                     encoding=TEXT_ENCODING,
                 )
 
+    def reuse_report(self) -> dict[str, Any]:
+        """Return cache/checkpoint hit, invalidation, and replay statistics."""
+        return self._reuse_stats.report()
+
     def _purge_invalidated_cache_variants(self) -> bool:
         """Persistently remove cache entries rejected by generate."""
         changed = False
@@ -2193,50 +2200,47 @@ class TableInspector:
                     )
                     if value
                 }
-                cached_data = self.cache.get(table_name)
-                if not invalid_hashes or not isinstance(cached_data, dict):
-                    continue
-                raw_variants = cached_data.get("variants")
-                variants = (
-                    dict(raw_variants)
-                    if isinstance(raw_variants, dict)
-                    else {}
-                )
-                retained_variants = {
-                    cache_hash: variant
-                    for cache_hash, variant in variants.items()
-                    if cache_hash not in invalid_hashes
-                }
-                current_hash = str(cached_data.get("hash") or "")
-                if current_hash in invalid_hashes:
-                    if not retained_variants:
-                        self.cache.pop(table_name, None)
-                    else:
-                        replacement_hash, replacement = list(
-                            retained_variants.items()
-                        )[-1]
-                        replacement_result = (
-                            replacement.get("result")
-                            if isinstance(replacement, dict)
-                            else None
-                        )
-                        if not isinstance(replacement_result, dict):
-                            self.cache.pop(table_name, None)
-                        else:
-                            self.cache[table_name] = {
-                                "hash": replacement_hash,
-                                "result": replacement_result,
-                                "content_sha256": str(
-                                    replacement.get("content_sha256") or ""
-                                ),
-                                "variants": retained_variants,
-                            }
-                    changed = True
-                    continue
-                if retained_variants != variants:
-                    cached_data["variants"] = retained_variants
-                    changed = True
+                for context_hash in invalid_hashes:
+                    changed = (
+                        self._remove_cached_variant(table_name, context_hash)
+                        or changed
+                    )
         return changed
+
+    def _remove_cached_variant(
+        self,
+        table_name: str,
+        context_hash: str,
+    ) -> bool:
+        cached_data = self.cache.get(table_name)
+        if not isinstance(cached_data, dict):
+            return False
+        raw_variants = cached_data.get("variants")
+        variants = dict(raw_variants) if isinstance(raw_variants, dict) else {}
+        removed = variants.pop(context_hash, None) is not None
+        if str(cached_data.get("hash") or "") != context_hash:
+            if removed:
+                cached_data["variants"] = variants
+            return removed
+        if not variants:
+            self.cache.pop(table_name, None)
+            return True
+        replacement_hash, replacement = list(variants.items())[-1]
+        replacement_result = (
+            replacement.get("result")
+            if isinstance(replacement, dict)
+            else None
+        )
+        if not isinstance(replacement_result, dict):
+            self.cache.pop(table_name, None)
+            return True
+        self.cache[table_name] = {
+            "hash": replacement_hash,
+            "result": replacement_result,
+            "content_sha256": str(replacement.get("content_sha256") or ""),
+            "variants": variants,
+        }
+        return True
 
     @staticmethod
     def _cached_result_for_hash(
@@ -2363,11 +2367,13 @@ class TableInspector:
             result.context_hash = current_hash
             result.catalog_snapshot_hash = self.catalog_snapshot_hash
             result.asset_manifest_hash = self.asset_manifest_hash
-            if (
-                result.resume_eligible
-                and result.status != "blocked"
-                and result.confidence >= self.min_cacheable_confidence
-            ):
+            synchronize_result_issues(result)
+            reuse = inspection_reuse_decision(
+                result,
+                min_confidence=self.min_cacheable_confidence,
+            )
+            result.resume_eligible = reuse.eligible
+            if reuse.eligible:
                 with self._cache_lock:
                     self._store_cached_result(
                         ctx.table_name,
@@ -2375,6 +2381,15 @@ class TableInspector:
                         result,
                     )
                 cache_changed = True
+            else:
+                with self._cache_lock:
+                    cache_changed = (
+                        self._remove_cached_variant(
+                            ctx.table_name,
+                            current_hash,
+                        )
+                        or cache_changed
+                    )
             if self.result_callback:
                 self.result_callback(result)
         if cache_changed:
@@ -2388,11 +2403,15 @@ class TableInspector:
         *,
         source: str,
     ) -> TableInspectResult | None:
+        if not cache:
+            return None
+        self._reuse_stats.record_lookup(source)
         cached_result = self._cached_result_for_hash(
             cache.get(ctx.table_name),
             current_hash,
         )
         if cached_result is None:
+            self._reuse_stats.record_miss(source, "variant_missing_or_invalid")
             return None
         try:
             cache_policy = InspectionCachePolicy.from_dict(
@@ -2403,6 +2422,9 @@ class TableInspector:
                 catalog_snapshot_hash=self.catalog_snapshot_hash,
                 asset_manifest_hash=self.asset_manifest_hash,
             ):
+                self._reuse_stats.record_miss(
+                    source, "input_fingerprint_changed"
+                )
                 return None
             cached_view = dict_to_result(
                 cached_result,
@@ -2418,12 +2440,16 @@ class TableInspector:
                 or cached_view.parsed_candidate is None
                 or cached_view.parsed_candidate.table_name != ctx.table_name
             ):
+                self._reuse_stats.record_miss(
+                    source, "payload_identity_mismatch"
+                )
                 return None
             if cached_view.raw_response is not None and (
                 cached_view.raw_response.table_name != ctx.table_name
                 or cached_view.parsed_candidate.raw_response_hash
                 != cached_view.raw_response.content_hash
             ):
+                self._reuse_stats.record_miss(source, "raw_payload_mismatch")
                 return None
             replayed_response = {
                 "choices": [
@@ -2463,17 +2489,21 @@ class TableInspector:
             TypeError,
             ValueError,
         ):
+            self._reuse_stats.record_miss(source, "payload_or_policy_invalid")
             return None
-        if (
-            restored_result.status == "blocked"
-            or restored_result.confidence < self.min_cacheable_confidence
-        ):
+        reuse = inspection_reuse_decision(
+            restored_result,
+            min_confidence=self.min_cacheable_confidence,
+        )
+        if not reuse.eligible:
+            self._reuse_stats.record_miss(source, reuse.reason)
             return None
         restored_result.context_hash = current_hash
         restored_result.catalog_snapshot_hash = self.catalog_snapshot_hash
         restored_result.asset_manifest_hash = self.asset_manifest_hash
         restored_result.reuse_source = source
-        restored_result.resume_eligible = True
+        restored_result.resume_eligible = reuse.eligible
+        self._reuse_stats.record_hit(source, reuse, cache_policy)
         return restored_result
 
     def _emit_progress(
@@ -2625,7 +2655,6 @@ class TableInspector:
         prompt = build_prompt(ctx)
         result = None
         last_usable_result = None
-        used_retry_fallback = False
         first_attempt_inferred_layer = ""
         for attempt in range(self.max_retries + 1):
             self._emit_progress(
@@ -2636,6 +2665,7 @@ class TableInspector:
                 max_attempts=self.max_retries + 1,
             )
             try:
+                self._reuse_stats.record_api_call()
                 resp_str = self._call_api(prompt)
             except InspectionBoundaryError as error:
                 result = TableInspectResult(
@@ -2665,7 +2695,6 @@ class TableInspector:
                     if last_usable_result is not None:
                         failure_issues = result.issues
                         result = last_usable_result
-                        used_retry_fallback = True
                         result.retry_count = attempt
                         result.reasoning_steps.append(
                             f"重试异常，保留上次可用结果: {str(error)}"
@@ -2758,7 +2787,6 @@ class TableInspector:
                 )
                 failure_issues = result.issues
                 result = last_usable_result
-                used_retry_fallback = True
                 result.retry_count = attempt
                 result.reasoning_steps.append(
                     f"重试异常，保留上次可用结果: {failure}"
@@ -2792,12 +2820,12 @@ class TableInspector:
         result.catalog_snapshot_hash = self.catalog_snapshot_hash
         result.asset_manifest_hash = self.asset_manifest_hash
         result.reuse_source = ""
-        result.resume_eligible = not used_retry_fallback
-        if (
-            not used_retry_fallback
-            and result.status != "blocked"
-            and result.confidence >= self.min_cacheable_confidence
-        ):
+        reuse = inspection_reuse_decision(
+            result,
+            min_confidence=self.min_cacheable_confidence,
+        )
+        result.resume_eligible = reuse.eligible
+        if reuse.eligible:
             with self._cache_lock:
                 self._store_cached_result(ctx.table_name, current_hash, result)
                 self._save_cache()

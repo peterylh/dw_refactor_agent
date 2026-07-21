@@ -890,6 +890,11 @@ def run_generate_model_metadata(
             "status": "disabled",
         }
     )
+    if llm_result is not None:
+        checkpoint_report["inspection_reuse"] = llm_result.get(
+            "inspection_reuse",
+            {},
+        )
     if checkpoint_finalization_error:
         checkpoint_report.update(
             {
@@ -2068,6 +2073,11 @@ def run_metadata_write(
         ),
         "metadata_warning_count": sum(
             len(report.get("metadata_warnings") or []) for report in reports
+        ),
+        "inspection_reuse": (
+            inspector.reuse_report()
+            if callable(getattr(inspector, "reuse_report", None))
+            else {}
         ),
         "tables": reports,
         "local_section_decisions": [

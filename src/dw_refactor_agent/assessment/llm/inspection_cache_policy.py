@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import math
+import threading
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
 from dw_refactor_agent.assessment.llm.inspection_issues import (
+    HARD_BLOCK_ISSUE_CODES,
     ISSUE_SCHEMA_VERSION,
     PARSED_CANDIDATE_SCHEMA_VERSION,
 )
@@ -17,8 +21,11 @@ INSPECTION_CACHE_SCHEMA_VERSION = 2
 SUPPORTED_INSPECTION_CACHE_SCHEMA_VERSIONS = frozenset({1, 2})
 PARSER_SCHEMA_VERSION = PARSED_CANDIDATE_SCHEMA_VERSION
 RECOVERY_VERSION = 1
-DECISION_POLICY_VERSION = 0
+DECISION_POLICY_VERSION = 1
 GOVERNANCE_SCHEMA_VERSION = MODEL_GOVERNANCE_SCHEMA_VERSION
+
+REUSE_KIND_ACCEPTED = "accepted"
+REUSE_KIND_SEMANTIC_QUARANTINE = "semantic_quarantine"
 
 POLICY_VERSION_FIELDS = (
     "parser_schema_version",
@@ -142,12 +149,152 @@ class InspectionCachePolicy:
 
     @property
     def requires_policy_replay(self) -> bool:
-        return (
-            self.schema_version != INSPECTION_CACHE_SCHEMA_VERSION
-            or self.recovery_version != RECOVERY_VERSION
-            or self.decision_policy_version != DECISION_POLICY_VERSION
-            or self.governance_schema_version != GOVERNANCE_SCHEMA_VERSION
+        return bool(self.version_differences())
+
+    def version_differences(self) -> dict[str, tuple[int, int]]:
+        """Return prior/current versions that require local re-adjudication."""
+        current = {
+            "schema_version": INSPECTION_CACHE_SCHEMA_VERSION,
+            **current_policy_versions(),
+        }
+        return {
+            name: (int(getattr(self, name)), expected)
+            for name, expected in current.items()
+            if int(getattr(self, name)) != expected
+        }
+
+
+@dataclass(frozen=True)
+class InspectionReuseDecision:
+    """Fail-closed decision for replaying one lossless LLM candidate."""
+
+    eligible: bool
+    kind: str = ""
+    reason: str = ""
+
+
+def inspection_reuse_decision(
+    result: Any,
+    *,
+    min_confidence: float,
+) -> InspectionReuseDecision:
+    """Allow accepted or non-retryable semantic candidates, never failures."""
+    parsed_candidate = getattr(result, "parsed_candidate", None)
+    if parsed_candidate is None:
+        return InspectionReuseDecision(
+            False, reason="lossless_payload_missing"
         )
+    confidence = float(getattr(result, "confidence", 0.0) or 0.0)
+    if not math.isfinite(confidence) or confidence < float(min_confidence):
+        return InspectionReuseDecision(False, reason="low_confidence")
+    issues = tuple(getattr(result, "issues", ()) or ())
+    if any(bool(getattr(issue, "retryable", False)) for issue in issues):
+        return InspectionReuseDecision(False, reason="retryable_issue")
+    if any(
+        str(getattr(issue, "origin", ""))
+        in {"transport", "parser", "internal"}
+        for issue in issues
+    ):
+        return InspectionReuseDecision(
+            False, reason="boundary_or_internal_failure"
+        )
+    if any(
+        str(getattr(issue, "stage", "")) == "propagation" for issue in issues
+    ):
+        return InspectionReuseDecision(False, reason="unsettled_propagation")
+    if any(
+        str(getattr(issue, "code", "")) in HARD_BLOCK_ISSUE_CODES
+        or str(getattr(issue, "origin", ""))
+        in {"deterministic_asset", "deterministic_contract"}
+        for issue in issues
+    ):
+        return InspectionReuseDecision(
+            False, reason="deterministic_hard_block"
+        )
+
+    status = str(getattr(result, "status", "") or "")
+    if status in {"passed", "warning"}:
+        return InspectionReuseDecision(True, kind=REUSE_KIND_ACCEPTED)
+    if (
+        status == "blocked"
+        and issues
+        and all(
+            str(getattr(issue, "origin", "")) == "llm_validation"
+            and bool(tuple(getattr(issue, "sections", ()) or ()))
+            for issue in issues
+        )
+    ):
+        return InspectionReuseDecision(
+            True,
+            kind=REUSE_KIND_SEMANTIC_QUARANTINE,
+        )
+    return InspectionReuseDecision(False, reason="unclassified_blocked_result")
+
+
+class InspectionReuseStats:
+    """Thread-safe cache/checkpoint reuse and policy replay counters."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._lookups: Counter = Counter()
+        self._hits: Counter = Counter()
+        self._hit_kinds: Counter = Counter()
+        self._miss_reasons: Counter = Counter()
+        self._policy_replays: Counter = Counter()
+        self._policy_replay_count = 0
+        self._api_call_count = 0
+
+    def record_lookup(self, source: str) -> None:
+        with self._lock:
+            self._lookups[source] += 1
+
+    def record_miss(self, source: str, reason: str) -> None:
+        with self._lock:
+            self._miss_reasons[f"{source}:{reason}"] += 1
+
+    def record_hit(
+        self,
+        source: str,
+        decision: InspectionReuseDecision,
+        cache_policy: InspectionCachePolicy,
+    ) -> None:
+        with self._lock:
+            self._hits[source] += 1
+            self._hit_kinds[decision.kind] += 1
+            version_differences = cache_policy.version_differences()
+            if version_differences:
+                self._policy_replay_count += 1
+            for name in version_differences:
+                self._policy_replays[name] += 1
+
+    def record_api_call(self) -> None:
+        with self._lock:
+            self._api_call_count += 1
+
+    def report(self) -> dict[str, Any]:
+        with self._lock:
+            lookup_count = sum(self._lookups.values())
+            hit_count = sum(self._hits.values())
+            return {
+                "schema_version": 1,
+                "policy_versions": current_policy_versions(),
+                "lookup_count": lookup_count,
+                "hit_count": hit_count,
+                "miss_count": sum(self._miss_reasons.values()),
+                "hit_rate": (
+                    round(hit_count / lookup_count, 6) if lookup_count else 0.0
+                ),
+                "api_call_count": self._api_call_count,
+                "lookups_by_source": dict(sorted(self._lookups.items())),
+                "hits_by_source": dict(sorted(self._hits.items())),
+                "hits_by_kind": dict(sorted(self._hit_kinds.items())),
+                "misses_by_reason": dict(sorted(self._miss_reasons.items())),
+                "adjudication_replay_count": hit_count,
+                "policy_replay_count": self._policy_replay_count,
+                "policy_replays_by_version": dict(
+                    sorted(self._policy_replays.items())
+                ),
+            }
 
 
 def current_policy_versions() -> dict[str, int]:
