@@ -10,6 +10,9 @@ import yaml
 from sqlglot import exp
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    read_consistent_metadata_snapshot,
+)
 from dw_refactor_agent.assessment.project_facts.business_semantics import (
     load_business_semantics_catalog,
 )
@@ -247,11 +250,17 @@ def _metric_name(item) -> str:
 
 def _load_model_metric_groups(
     project: str,
+    model_metadata: dict[str, dict] | None = None,
 ) -> _MetricGroupEvidence:
     metric_groups = {}
     statuses = {}
 
-    for table_name, metadata in load_model_metadata(project).items():
+    models = (
+        model_metadata
+        if model_metadata is not None
+        else load_model_metadata(project)
+    )
+    for table_name, metadata in models.items():
         view = AssessmentModelSemantics.from_metadata(metadata)
         section = view.section("metrics")
         status = view.status("metrics")
@@ -616,6 +625,58 @@ def build_contexts(
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     use_project_asset_dirs = ddl_dir is None
     use_project_task_dirs = tasks_dir is None
+    explicit_model_metadata = model_metadata is not None
+
+    def load_context_metadata():
+        config.clear_model_metadata_cache()
+        config.clear_business_semantics_cache()
+        loaded_models = (
+            model_metadata
+            if model_metadata is not None
+            else load_model_metadata(project)
+        )
+        loaded_catalog = (
+            business_semantics_catalog
+            if business_semantics_catalog is not None
+            else load_business_semantics_catalog(project)
+        )
+        if metric_groups is None:
+            metric_evidence = _load_model_metric_groups(
+                project,
+                loaded_models,
+            )
+            loaded_metric_groups = metric_evidence.groups
+            loaded_metric_statuses = metric_evidence.statuses
+        else:
+            loaded_metric_groups = metric_groups
+            loaded_metric_statuses = {}
+        if not use_project_asset_dirs:
+            loaded_model_asset_roles = {}
+        elif explicit_model_metadata and use_model_metadata_asset_roles:
+            loaded_model_asset_roles = _metadata_asset_roles(loaded_models)
+        else:
+            loaded_model_asset_roles = _project_model_asset_roles(project)
+        return (
+            loaded_models,
+            loaded_catalog,
+            loaded_metric_groups,
+            loaded_metric_statuses,
+            loaded_model_asset_roles,
+        )
+
+    if project in config.PROJECT_CONFIG:
+        loaded_context_metadata, _formal_snapshot = (
+            read_consistent_metadata_snapshot(project, load_context_metadata)
+        )
+    else:
+        loaded_context_metadata = load_context_metadata()
+    (
+        model_metadata,
+        business_semantics_catalog,
+        metric_groups,
+        loaded_metric_statuses,
+        model_asset_roles,
+    ) = loaded_context_metadata
 
     lineage_view = LineageView.from_data(project, lineage_data)
     upstream, downstream = lineage_view.asset_table_graph()
@@ -641,17 +702,6 @@ def build_contexts(
     )
     has_lineage_edges = any(upstream.values()) or any(downstream.values())
     target_layers = set(layers or ("DWD", "DWS", "DIM"))
-    loaded_metric_statuses = {}
-    if metric_groups is None:
-        metric_evidence = _load_model_metric_groups(project)
-        metric_groups = metric_evidence.groups
-        loaded_metric_statuses = metric_evidence.statuses
-    explicit_model_metadata = model_metadata is not None
-    model_metadata = (
-        model_metadata
-        if explicit_model_metadata
-        else load_model_metadata(project)
-    )
     canonical_model_metadata = _canonical_table_lookup(
         _with_unique_qualified_aliases(
             _canonical_model_metadata_index(model_metadata),
@@ -690,14 +740,6 @@ def build_contexts(
         business_semantics_catalog,
     )
     project_context = _project_context(project, business_semantics_catalog)
-    if not use_project_asset_dirs:
-        model_asset_roles = {}
-    elif explicit_model_metadata and use_model_metadata_asset_roles:
-        # Generate passes an in-memory cold-start candidate.  Its inspection
-        # boundary must not depend on stale YAML files still present on disk.
-        model_asset_roles = _metadata_asset_roles(model_metadata)
-    else:
-        model_asset_roles = _project_model_asset_roles(project)
     contexts = []
     canonical_asset_content = {
         _canonical_table_name(table_name): dict(content)

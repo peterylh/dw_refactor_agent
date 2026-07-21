@@ -10,7 +10,10 @@ import yaml
 
 import dw_refactor_agent.config as config
 from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    MetadataPublicationOutcome,
+    capture_metadata_publication_snapshot,
     metadata_publication_lock,
+    transactional_metadata_publication,
 )
 from dw_refactor_agent.assessment.project_facts.asset_catalog import (
     _short_table_name,
@@ -564,11 +567,13 @@ def write_initial_business_semantics_catalog(
 ) -> dict[str, Any]:
     directory = business_semantics_dir(project)
     paths = business_semantics_paths(project)
-    split_base_catalog = load_business_semantics_catalog(project)
-    legacy_catalog = _load_legacy_business_semantics_catalog(
-        directory,
-        project,
-    )
+    with metadata_publication_lock(project):
+        base_snapshot = capture_metadata_publication_snapshot(project)
+        split_base_catalog = load_business_semantics_catalog(project)
+        legacy_catalog = _load_legacy_business_semantics_catalog(
+            directory,
+            project,
+        )
     base_catalog = _catalog_with_legacy_missing_sections(
         split_base_catalog,
         legacy_catalog,
@@ -606,23 +611,33 @@ def write_initial_business_semantics_catalog(
     )
     removed_legacy_paths: list[str] = []
     changed = bool(write_names or legacy_paths_to_remove)
+    publication_outcome = MetadataPublicationOutcome(
+        formal_files_state="unchanged",
+        finalization_status="not_started",
+        recovery_required=False,
+    )
     if changed and not dry_run:
-        with metadata_publication_lock(project):
-            directory.mkdir(parents=True, exist_ok=True)
-            for name in sorted(write_names):
-                paths[name].write_text(
-                    yaml.safe_dump(
-                        payloads[name],
-                        allow_unicode=True,
-                        sort_keys=False,
-                    ),
-                    encoding=TEXT_ENCODING,
-                )
-            for path in legacy_paths_to_remove:
-                Path(path).unlink()
-                removed_legacy_paths.append(path)
+        rendered_files = {
+            paths[name]: yaml.safe_dump(
+                payloads[name],
+                allow_unicode=True,
+                sort_keys=False,
+            )
+            for name in sorted(write_names)
+        }
+
+        def clear_caches() -> None:
             config.clear_business_semantics_cache()
             config.clear_naming_config_cache()
+
+        publication_outcome = transactional_metadata_publication(
+            project,
+            rendered_files,
+            delete_paths=tuple(map(Path, legacy_paths_to_remove)),
+            expected_snapshot=base_snapshot,
+        )
+        clear_caches()
+        removed_legacy_paths.extend(legacy_paths_to_remove)
     return {
         "project": project,
         "path": str(directory),
@@ -633,6 +648,7 @@ def write_initial_business_semantics_catalog(
         "changed": changed,
         "updated": bool(changed and not dry_run),
         "catalog": catalog,
+        "publication": publication_outcome.to_dict(),
     }
 
 

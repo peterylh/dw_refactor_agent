@@ -25,7 +25,10 @@ from dw_refactor_agent.assessment.llm.inspection_contract import (
     business_process_codes,
 )
 from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    MetadataPublicationSnapshot,
+    capture_metadata_publication_snapshot,
     metadata_publication_lock,
+    transactional_metadata_publication,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
@@ -47,7 +50,6 @@ from dw_refactor_agent.assessment.semantic_models import (
     CanonicalSemanticPayload,
 )
 from dw_refactor_agent.config import (
-    TEXT_ENCODING,
     UnavailableModelSection,
     UnavailableModelSectionUsageError,
     get_execution_contract,
@@ -465,17 +467,39 @@ def update_model_yaml_from_catalog(
     *,
     dry_run: bool = False,
     write_scope: str = "business",
+    existing_model: dict[str, Any] | None = None,
+    path: Path | None = None,
+    expected_snapshot: MetadataPublicationSnapshot | None = None,
+    include_model_metadata: bool = False,
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
         raise ValueError("catalog 回写仅支持 write_scope=all/table/business")
 
-    path = model_path_for_table(
-        project,
-        table_name,
-        layer=mapping.get("layer"),
-    )
-    existing = _existing_model_data(path)
+    if (
+        existing_model is not None
+        and not dry_run
+        and expected_snapshot is None
+    ):
+        raise ValueError(
+            "non-dry-run catalog update with supplied metadata requires CAS snapshot"
+        )
+    if path is None:
+        path = model_path_for_table(
+            project,
+            table_name,
+            layer=mapping.get("layer"),
+        )
+    if existing_model is None and not dry_run:
+        with metadata_publication_lock(project):
+            expected_snapshot = capture_metadata_publication_snapshot(project)
+            existing = _existing_model_data(path)
+    else:
+        existing = (
+            dict(existing_model)
+            if existing_model is not None
+            else _existing_model_data(path)
+        )
     previous = dict(existing)
     updated = _catalog_model_payload(
         table_name=table_name,
@@ -505,12 +529,17 @@ def update_model_yaml_from_catalog(
 
     changed = updated != previous
     if changed and not dry_run:
-        with metadata_publication_lock(project):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
-                encoding=TEXT_ENCODING,
-            )
+        transactional_metadata_publication(
+            project,
+            {
+                path: yaml.safe_dump(
+                    updated,
+                    allow_unicode=True,
+                    sort_keys=False,
+                )
+            },
+            expected_snapshot=expected_snapshot,
+        )
 
     business_changed = any(
         updated.get(key) != previous.get(key)
@@ -526,7 +555,7 @@ def update_model_yaml_from_catalog(
             "dimension_content_type",
         )
     )
-    return {
+    result = {
         "table": table_name,
         "path": str(path),
         "status": "passed",
@@ -557,3 +586,6 @@ def update_model_yaml_from_catalog(
         "dimension_role": updated.get("dimension_role"),
         "dimension_content_type": updated.get("dimension_content_type"),
     }
+    if include_model_metadata:
+        result["model_metadata"] = updated
+    return result

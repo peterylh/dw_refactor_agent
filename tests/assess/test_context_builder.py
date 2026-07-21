@@ -322,6 +322,59 @@ def test_build_contexts_warns_without_parsing_tasks_when_lineage_empty(
     assert "lineage graph is empty" in caplog.text.lower()
 
 
+def test_build_contexts_clears_stale_metadata_cache_inside_snapshot(
+    tmp_path, monkeypatch
+):
+    project = "context_consistent_snapshot"
+    project_dir = tmp_path / project
+    models_dir = project_dir / "mid" / "models"
+    ddl_dir = tmp_path / "ddl"
+    tasks_dir = tmp_path / "tasks"
+    for directory in (models_dir, ddl_dir, tasks_dir):
+        directory.mkdir(parents=True)
+    model_path = models_dir / "fact.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {"version": 2, "name": "fact", "layer": "DWD"},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ddl_dir / "fact.sql").write_text(
+        "CREATE TABLE fact (id BIGINT);",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {"dir": project, "catalog": "internal", "db": "demo"},
+    )
+    monkeypatch.setattr(
+        context_builder_module,
+        "load_model_metadata",
+        config.load_model_metadata,
+    )
+    config.clear_model_metadata_cache()
+    assert config.load_model_metadata(project)["fact"]["layer"] == "DWD"
+    model_path.write_text(
+        yaml.safe_dump(
+            {"version": 2, "name": "fact", "layer": "DWS"},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    context = build_contexts(
+        project,
+        {"tables": [{"name": "fact"}], "edges": []},
+        ddl_dir,
+        tasks_dir,
+    )[0]
+
+    assert context.layer == "DWS"
+
+
 def test_build_contexts_reads_default_mid_asset_dirs(
     sample_lineage_data,
     tmp_path,

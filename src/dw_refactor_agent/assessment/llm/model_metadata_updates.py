@@ -37,7 +37,10 @@ from dw_refactor_agent.assessment.llm.metadata_flow import (
     MetadataFlowPlan,
 )
 from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    MetadataPublicationSnapshot,
+    capture_metadata_publication_snapshot,
     metadata_publication_lock,
+    transactional_metadata_publication,
 )
 from dw_refactor_agent.assessment.llm.model_metadata_runtime import (
     project_root,
@@ -999,14 +1002,30 @@ def update_model_yaml(
     path: Path | None = None,
     resolution_policy: LayerResolutionPolicy | None = None,
     include_model_metadata: bool = False,
+    expected_snapshot: MetadataPublicationSnapshot | None = None,
 ) -> dict[str, Any]:
     """将单表 LLM 巡检元数据和指标名覆盖写入 models/{table}.yaml。"""
     write_scope = _validate_write_scope(write_scope)
     if path is None:
         path = model_path_for_table(project, result.table_name)
-    existing = dict(existing_model) if existing_model is not None else {}
-    if existing_model is None and path.exists():
-        existing = yaml.safe_load(path.read_text(encoding=TEXT_ENCODING)) or {}
+    if (
+        existing_model is not None
+        and not dry_run
+        and expected_snapshot is None
+    ):
+        raise ValueError(
+            "non-dry-run model update with supplied metadata requires CAS snapshot"
+        )
+    if existing_model is None and not dry_run:
+        with metadata_publication_lock(project):
+            expected_snapshot = capture_metadata_publication_snapshot(project)
+            existing = _existing_model_data(path)
+    else:
+        existing = dict(existing_model) if existing_model is not None else {}
+        if existing_model is None and path.exists():
+            existing = (
+                yaml.safe_load(path.read_text(encoding=TEXT_ENCODING)) or {}
+            )
     if not isinstance(existing, dict):
         existing = {}
     resolution = _layer_resolution_for_model(
@@ -1112,14 +1131,17 @@ def update_model_yaml(
                 )
             changed = updated != existing
             if not dry_run and changed:
-                with metadata_publication_lock(project):
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(
-                        yaml.safe_dump(
-                            updated, allow_unicode=True, sort_keys=False
-                        ),
-                        encoding=TEXT_ENCODING,
-                    )
+                transactional_metadata_publication(
+                    project,
+                    {
+                        path: yaml.safe_dump(
+                            updated,
+                            allow_unicode=True,
+                            sort_keys=False,
+                        )
+                    },
+                    expected_snapshot=expected_snapshot,
+                )
             update = {
                 "table": result.table_name,
                 "path": str(path),
@@ -1399,12 +1421,17 @@ def update_model_yaml(
         or updated.get("related_entities") != previous_related_entities
     )
     if not dry_run and changed:
-        with metadata_publication_lock(project):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
-                encoding=TEXT_ENCODING,
-            )
+        transactional_metadata_publication(
+            project,
+            {
+                path: yaml.safe_dump(
+                    updated,
+                    allow_unicode=True,
+                    sort_keys=False,
+                )
+            },
+            expected_snapshot=expected_snapshot,
+        )
 
     new_metric_count = 0
     removed_metric_count = 0

@@ -2594,43 +2594,6 @@ def test_generate_publication_validates_entity_keys_and_grain_references():
     assert validation["reinspection_tables"] == ["dim_customer"]
 
 
-def test_generate_file_set_publication_rolls_back_on_replace_failure(
-    tmp_path, monkeypatch
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    catalog_path = tmp_path / "business_processes.yaml"
-    model_path = tmp_path / "dwd_order_detail.yaml"
-    catalog_path.write_text("catalog: old\n", encoding="utf-8")
-    model_path.write_text("model: old\n", encoding="utf-8")
-    original_replace = Path.replace
-    staged_replace_count = 0
-
-    def flaky_replace(self, target):
-        nonlocal staged_replace_count
-        if self.name.endswith(".staged"):
-            staged_replace_count += 1
-            if staged_replace_count == 2:
-                raise OSError("simulated replacement failure")
-        return original_replace(self, target)
-
-    monkeypatch.setattr(Path, "replace", flaky_replace)
-
-    with pytest.raises(OSError, match="simulated replacement failure"):
-        writer_module._transactional_publish_files(
-            {
-                catalog_path: "catalog: new\n",
-                model_path: "model: new\n",
-            },
-            delete_paths=[],
-        )
-
-    assert catalog_path.read_text(encoding="utf-8") == "catalog: old\n"
-    assert model_path.read_text(encoding="utf-8") == "model: old\n"
-    assert list(tmp_path.glob(".*.staged")) == []
-    assert list(tmp_path.glob(".*.backup")) == []
-
-
 def test_generate_asset_collection_does_not_read_existing_model_yaml(
     tmp_path, monkeypatch
 ):

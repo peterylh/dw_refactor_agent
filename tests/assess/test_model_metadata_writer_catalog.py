@@ -1713,6 +1713,64 @@ def test_run_catalog_metadata_write_removes_stale_business_codes(
     assert "semantic_subject" not in dim_model
 
 
+def test_catalog_write_reports_published_when_only_finalization_fails(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+    from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+        MetadataPublicationOutcome,
+        MetadataPublicationRecoveryRequired,
+    )
+
+    project = "catalog_writer_finalize_failure"
+    _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_order_detail"],
+        models={
+            "dwd_order_detail": {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+                "business_process": "STALE_PROCESS",
+            }
+        },
+    )
+
+    def publish_then_fail(_project, rendered_files, **_kwargs):
+        for path, content in rendered_files.items():
+            path.write_text(content, encoding="utf-8")
+        outcome = MetadataPublicationOutcome(
+            formal_files_state="published",
+            finalization_status="failed",
+            recovery_required=True,
+            transaction_id="tx-finalize-failure",
+        )
+        raise MetadataPublicationRecoveryRequired(
+            "cleanup failed",
+            outcome=outcome,
+        )
+
+    monkeypatch.setattr(
+        writer_module,
+        "transactional_metadata_publication",
+        publish_then_fail,
+    )
+
+    result = run_catalog_metadata_write(
+        project, dry_run=False, write_scope="business"
+    )
+
+    assert result["model_update_count"] == 1
+    assert result["model_updates"][0]["updated"] is True
+    assert result["publication"]["status"] == "published"
+    assert result["publication"]["finalization_status"] == "failed"
+    assert result["publication"]["recovery_required"] is True
+
+
 def test_run_catalog_metadata_write_removes_subject_from_fact_models(
     tmp_path, monkeypatch
 ):

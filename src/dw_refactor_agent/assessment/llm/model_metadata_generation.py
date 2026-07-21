@@ -11,11 +11,9 @@ DWD/DWS 表中的指标字段回写到 models/{table}.yaml，并把 DWD 事实�
 from __future__ import annotations
 
 import sys
-from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import yaml
 
@@ -41,6 +39,10 @@ from dw_refactor_agent.assessment.llm.metadata_flow import (
 from dw_refactor_agent.assessment.llm.model_generation_manifest import (
     GenerateAssetManifest,
     build_generate_asset_preflight,
+)
+from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    MetadataPublicationOutcome,
+    transactional_metadata_publication,
 )
 from dw_refactor_agent.assessment.llm.model_metadata_runtime import (
     project_root,
@@ -203,6 +205,11 @@ def _ensure_metadata_catalog_skeleton(
         "catalog_initialized": bool(written_names),
         "catalog_init_written_names": [] if dry_run else written_names,
         "planned_catalog_written_names": written_names if dry_run else [],
+        "planned_catalog_deleted_files": (
+            list(init_result.get("legacy_paths_to_remove") or [])
+            if dry_run
+            else []
+        ),
     }
     return catalog, report
 
@@ -615,7 +622,11 @@ def _write_generated_model_metadata(
     refinement_updates: list[dict[str, Any]] | None = None,
     additional_rendered_files: dict[Path, str] | None = None,
     additional_deleted_files: list[Path] | None = None,
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[str],
+    MetadataPublicationOutcome,
+]:
     existing_model_files = (
         [
             path if path.is_absolute() else project_root() / path
@@ -671,6 +682,11 @@ def _write_generated_model_metadata(
             )
         model_updates.append(update)
 
+    publication_outcome = MetadataPublicationOutcome(
+        formal_files_state="unchanged",
+        finalization_status="not_started",
+        recovery_required=False,
+    )
     if not dry_run:
         rendered_files = dict(additional_rendered_files or {})
         rendered_files.update(dict(rendered_models))
@@ -683,7 +699,8 @@ def _write_generated_model_metadata(
             if path.resolve() not in target_paths
         ]
         deleted_model_files.extend(str(path) for path in existing_model_files)
-        _transactional_publish_files(
+        publication_outcome = _transactional_publish_files(
+            project,
             rendered_files,
             delete_paths=(
                 obsolete_model_files + list(additional_deleted_files or [])
@@ -697,7 +714,7 @@ def _write_generated_model_metadata(
             _config.clear_business_semantics_cache()
             _config.clear_naming_config_cache()
 
-    return model_updates, deleted_model_files
+    return model_updates, deleted_model_files, publication_outcome
 
 
 def _candidate_model_publication_targets(
@@ -724,62 +741,17 @@ def _candidate_model_publication_targets(
 
 
 def _transactional_publish_files(
+    project: str,
     rendered_files: dict[Path, str],
     *,
     delete_paths: list[Path],
-) -> None:
-    """Publish a generated file set with rollback on ordinary exceptions."""
-    token = uuid4().hex
-    staged_files: list[tuple[Path, Path]] = []
-    backups: list[tuple[Path, Path]] = []
-    installed_paths: list[Path] = []
-    publication_succeeded = False
-    rendered_paths = set(rendered_files)
-    deletion_targets = [
-        path for path in delete_paths if path not in rendered_paths
-    ]
-    try:
-        for path, rendered in sorted(
-            rendered_files.items(), key=lambda item: str(item[0])
-        ):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            staged_path = path.with_name(f".{path.name}.{token}.staged")
-            staged_path.write_text(rendered, encoding=TEXT_ENCODING)
-            staged_files.append((staged_path, path))
-
-        targets = [path for _staged, path in staged_files]
-        targets.extend(path for path in deletion_targets if path.exists())
-        for path in targets:
-            if not path.exists():
-                continue
-            backup_path = path.with_name(f".{path.name}.{token}.backup")
-            path.replace(backup_path)
-            backups.append((backup_path, path))
-
-        for staged_path, path in staged_files:
-            staged_path.replace(path)
-            installed_paths.append(path)
-        publication_succeeded = True
-    except Exception:
-        for path in reversed(installed_paths):
-            if path.exists():
-                path.unlink()
-        for backup_path, path in reversed(backups):
-            if path.exists():
-                path.unlink()
-            if backup_path.exists():
-                backup_path.replace(path)
-        raise
-    finally:
-        for staged_path, _path in staged_files:
-            if staged_path.exists():
-                with suppress(OSError):
-                    staged_path.unlink()
-        if publication_succeeded:
-            for backup_path, _path in backups:
-                if backup_path.exists():
-                    with suppress(OSError):
-                        backup_path.unlink()
+) -> MetadataPublicationOutcome:
+    """Publish a generated file set through the shared durable transaction."""
+    return transactional_metadata_publication(
+        project,
+        rendered_files,
+        delete_paths=delete_paths,
+    )
 
 
 def _render_generated_catalog_files(

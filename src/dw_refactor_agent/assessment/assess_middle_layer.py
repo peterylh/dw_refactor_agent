@@ -263,15 +263,32 @@ def assess(
         only_rules=only_rules,
     )
 
+    from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+        read_consistent_metadata_snapshot,
+    )
     from dw_refactor_agent.config import (
+        clear_business_semantics_cache,
+        clear_model_metadata_cache,
+        clear_naming_config_cache,
         get_business_domain_config,
         get_naming_config,
         load_model_metadata,
     )
 
-    nc = get_naming_config(project)
-    model_metadata = load_model_metadata(project)
-    business_domain_config = get_business_domain_config(project)
+    def load_assessment_metadata():
+        clear_model_metadata_cache()
+        clear_business_semantics_cache()
+        clear_naming_config_cache()
+        return (
+            get_naming_config(project),
+            load_model_metadata(project),
+            get_business_domain_config(project),
+        )
+
+    (
+        (nc, model_metadata, business_domain_config),
+        _formal_snapshot,
+    ) = read_consistent_metadata_snapshot(project, load_assessment_metadata)
 
     data = (
         lineage_data

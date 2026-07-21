@@ -34,6 +34,7 @@ TEST_TYPE_BY_FILE = {
     "tests/assess/test_layer_resolution.py": "unit",
     "tests/assess/test_metadata_flow.py": "unit",
     "tests/assess/test_model_design.py": "unit",
+    "tests/assess/test_model_metadata_publication.py": "unit",
     "tests/assess/test_model_metadata_writer_catalog.py": "scenario",
     "tests/assess/test_model_metadata_writer_generation.py": "scenario",
     "tests/assess/test_model_metadata_writer_updates.py": "scenario",

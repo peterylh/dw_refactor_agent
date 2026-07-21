@@ -20,6 +20,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
+import yaml
+
 _src_root = Path(__file__).resolve().parents[3]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
@@ -53,7 +55,11 @@ from dw_refactor_agent.assessment.llm.model_metadata_checkpoint import (
     GenerateModelCheckpoint,
 )
 from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    MetadataPublicationError,
+    MetadataPublicationOutcome,
     metadata_publication_lock,
+    read_consistent_metadata_snapshot,
+    transactional_metadata_publication,
 )
 from dw_refactor_agent.assessment.llm.publication_transitions import (
     plan_inspection_run_transition,
@@ -689,6 +695,11 @@ def run_generate_model_metadata(
         refinement_updates = (llm_result or {}).get("model_updates") or []
         model_updates: list[dict[str, Any]]
         deleted_model_files: list[str]
+        publication_outcome = MetadataPublicationOutcome(
+            formal_files_state="unchanged",
+            finalization_status="not_started",
+            recovery_required=False,
+        )
         if not dry_run and publication_validation["status"] != "blocked":
             with metadata_publication_lock(project):
                 current_catalog, _current_catalog_report = (
@@ -721,8 +732,12 @@ def run_generate_model_metadata(
                         confirmed_catalog,
                         enabled=update_catalog,
                     )
-                    model_updates, deleted_model_files = (
-                        _write_generated_model_metadata(
+                    try:
+                        (
+                            model_updates,
+                            deleted_model_files,
+                            publication_outcome,
+                        ) = _write_generated_model_metadata(
                             project,
                             generate_plan,
                             final_model_metadata,
@@ -732,10 +747,47 @@ def run_generate_model_metadata(
                             additional_rendered_files=catalog_rendered_files,
                             additional_deleted_files=catalog_deleted_files,
                         )
-                    )
-                    should_publish = True
+                    except MetadataPublicationError as exc:
+                        publication_outcome = exc.outcome
+                        publication_validation = {
+                            "status": "blocked",
+                            "stage": "transactional_publication",
+                            "error_count": 1,
+                            "errors": [
+                                {
+                                    "type": "publication_transaction_failed",
+                                    "message": str(exc),
+                                    "formal_files_state": (
+                                        exc.outcome.formal_files_state
+                                    ),
+                                    "recovery_required": (
+                                        exc.outcome.recovery_required
+                                    ),
+                                }
+                            ],
+                            "issues": [],
+                            "blocked_tables": [],
+                            "reinspection_tables": [],
+                        }
+                        should_publish = (
+                            exc.outcome.formal_files_state == "published"
+                        )
+                        (
+                            model_updates,
+                            deleted_model_files,
+                            _failed_dry_run_outcome,
+                        ) = _write_generated_model_metadata(
+                            project,
+                            generate_plan,
+                            final_model_metadata,
+                            dry_run=True,
+                            delete_existing=replace_existing_models,
+                            refinement_updates=refinement_updates,
+                        )
+                    else:
+                        should_publish = True
         if not should_publish:
-            model_updates, deleted_model_files = (
+            model_updates, deleted_model_files, _dry_run_outcome = (
                 _write_generated_model_metadata(
                     project,
                     generate_plan,
@@ -745,6 +797,17 @@ def run_generate_model_metadata(
                     refinement_updates=refinement_updates,
                 )
             )
+        else:
+            for update in model_updates:
+                update["updated"] = bool(update.get("changed"))
+            if (
+                publication_outcome.recovery_required
+                and replace_existing_models
+                and not deleted_model_files
+            ):
+                deleted_model_files = list(
+                    generate_plan.write_targets.planned_deleted_model_files
+                )
         publication_blocked = publication_validation["status"] == "blocked"
         candidate_status = (
             resolved_candidate.status
@@ -866,11 +929,26 @@ def run_generate_model_metadata(
         ),
         "publication": {
             "status": (
-                "blocked"
-                if publication_blocked
-                else ("dry_run" if dry_run else "published")
+                "published"
+                if should_publish
+                else (
+                    "blocked"
+                    if publication_blocked
+                    else ("dry_run" if dry_run else "published")
+                )
             ),
             "published": should_publish,
+            "formal_files_state": publication_outcome.formal_files_state,
+            "finalization_status": (
+                "failed"
+                if checkpoint_finalization_error
+                or publication_outcome.finalization_status == "failed"
+                else ("completed" if should_publish else "not_started")
+            ),
+            "recovery_required": bool(
+                checkpoint_finalization_error
+                or publication_outcome.recovery_required
+            ),
             "validation": publication_validation,
             "inspection_transition": inspection_transition.to_dict(),
             "transition_plan": publication_transition.to_dict(),
@@ -905,32 +983,47 @@ def run_catalog_metadata_write(
     if write_scope not in {"all", "table", "business"}:
         raise ValueError("catalog 回写仅支持 write_scope=all/table/business")
 
-    init_result = None
-    if init_catalog:
-        init_result = write_initial_business_semantics_catalog(
-            project,
-            overwrite=False,
-            dry_run=dry_run,
+    def load_catalog_inputs():
+        import dw_refactor_agent.config as _config
+
+        _config.clear_model_metadata_cache()
+        _config.clear_business_semantics_cache()
+        planned_init = None
+        if init_catalog:
+            planned_init = write_initial_business_semantics_catalog(
+                project,
+                overwrite=False,
+                dry_run=True,
+            )
+        loaded_catalog = (
+            (planned_init or {}).get("catalog")
+            if planned_init
+            else load_business_semantics_catalog(project)
+        )
+        return (
+            planned_init,
+            loaded_catalog,
+            load_model_metadata(project),
+            _catalog_table_assets(project),
         )
 
-    catalog = (
-        (init_result or {}).get("catalog")
-        if init_result and dry_run
-        else load_business_semantics_catalog(project)
-    )
+    (
+        (init_result, catalog, base_models, table_assets),
+        base_formal_snapshot,
+    ) = read_consistent_metadata_snapshot(project, load_catalog_inputs)
     if not catalog:
         raise FileNotFoundError(
             f"未找到 {project} 业务语义目录，请先初始化三份 catalog YAML"
         )
 
     updates = []
-    for table_name, asset in sorted(_catalog_table_assets(project).items()):
+    for table_name, asset in sorted(table_assets.items()):
         if not asset.ddl or not asset.ddl.exists:
             continue
         mapping = catalog_mapping_for_model(
             catalog,
             table_name,
-            load_model_metadata(project).get(table_name),
+            base_models.get(table_name),
         )
         if isinstance(mapping, UnavailableModelSection):
             updates.append(
@@ -950,17 +1043,86 @@ def run_catalog_metadata_write(
                 project,
                 table_name,
                 mapping,
-                dry_run=dry_run,
+                dry_run=True,
                 write_scope=write_scope,
+                existing_model=base_models.get(table_name),
+                include_model_metadata=True,
             )
         )
-    if not dry_run:
-        import dw_refactor_agent.config as _config
 
-        _config.clear_model_metadata_cache()
+    publication_outcome = MetadataPublicationOutcome(
+        formal_files_state="unchanged",
+        finalization_status="not_started",
+        recovery_required=False,
+    )
+    publication_error = None
+    if not dry_run:
+        rendered_files = {
+            Path(update["path"]): yaml.safe_dump(
+                update["model_metadata"],
+                allow_unicode=True,
+                sort_keys=False,
+            )
+            for update in updates
+            if update.get("changed")
+            and isinstance(update.get("model_metadata"), dict)
+        }
+        planned_catalog_names = set(
+            (init_result or {}).get("written_names") or []
+        )
+        if planned_catalog_names:
+            catalog_files, _deleted, _written = (
+                _render_generated_catalog_files(
+                    project,
+                    catalog,
+                    enabled=True,
+                )
+            )
+            catalog_paths = business_semantics_paths(project)
+            rendered_files.update(
+                {
+                    path: content
+                    for path, content in catalog_files.items()
+                    if any(
+                        path == catalog_paths.get(name)
+                        for name in planned_catalog_names
+                    )
+                }
+            )
+
+        def clear_catalog_write_caches() -> None:
+            import dw_refactor_agent.config as _config
+
+            _config.clear_model_metadata_cache()
+            _config.clear_business_semantics_cache()
+            _config.clear_naming_config_cache()
+
+        try:
+            publication_outcome = transactional_metadata_publication(
+                project,
+                rendered_files,
+                delete_paths=tuple(
+                    Path(path)
+                    for path in (init_result or {}).get(
+                        "legacy_paths_to_remove"
+                    )
+                    or []
+                ),
+                expected_snapshot=base_formal_snapshot,
+            )
+        except MetadataPublicationError as exc:
+            publication_outcome = exc.outcome
+            publication_error = f"{type(exc).__name__}: {exc}"
+        if publication_outcome.formal_files_state == "published":
+            clear_catalog_write_caches()
+            for update in updates:
+                update["updated"] = bool(update.get("changed"))
+
+    for update in updates:
+        update.pop("model_metadata", None)
 
     changed_updates = [update for update in updates if update["changed"]]
-    return {
+    result = {
         "project": project,
         "source": "catalog",
         "write_scope": write_scope,
@@ -975,7 +1137,23 @@ def run_catalog_metadata_write(
             [update for update in changed_updates if update.get("updated")]
         ),
         "model_change_count": len(changed_updates),
+        "publication": {
+            "status": (
+                "dry_run"
+                if dry_run
+                else (
+                    "published"
+                    if publication_outcome.formal_files_state == "published"
+                    else ("blocked" if publication_error else "unchanged")
+                )
+            ),
+            "published": publication_outcome.formal_files_state == "published",
+            **publication_outcome.to_dict(),
+        },
     }
+    if publication_error:
+        result["publication"]["error"] = publication_error
+    return result
 
 
 def run_catalog_discovery(
@@ -1012,8 +1190,19 @@ def run_catalog_discovery(
     if show_progress:
         inspector.progress_callback = build_progress_callback()
 
-    model_metadata = load_model_metadata(project)
-    existing_catalog = load_business_semantics_catalog(project)
+    def load_discovery_inputs():
+        import dw_refactor_agent.config as _config
+
+        _config.clear_model_metadata_cache()
+        _config.clear_business_semantics_cache()
+        return load_model_metadata(project), load_business_semantics_catalog(
+            project
+        )
+
+    (
+        (model_metadata, existing_catalog),
+        base_formal_snapshot,
+    ) = read_consistent_metadata_snapshot(project, load_discovery_inputs)
     inspection = run_inspection_pipeline(
         project,
         data,
@@ -1053,7 +1242,7 @@ def run_catalog_discovery(
     write_result = write_initial_business_semantics_catalog(
         project,
         overwrite=overwrite,
-        dry_run=dry_run,
+        dry_run=True,
         inspection_results=resolved_results,
     )
     model_updates = []
@@ -1077,17 +1266,82 @@ def run_catalog_discovery(
             project,
             result.table_name,
             mapping,
-            dry_run=dry_run,
+            dry_run=True,
             write_scope="business",
+            existing_model=model_metadata.get(result.table_name),
+            include_model_metadata=True,
         )
         if update["changed"]:
             model_updates.append(update)
-    if not dry_run and model_updates:
-        import dw_refactor_agent.config as _config
 
-        _config.clear_model_metadata_cache()
+    publication_outcome = MetadataPublicationOutcome(
+        formal_files_state="unchanged",
+        finalization_status="not_started",
+        recovery_required=False,
+    )
+    publication_error = None
+    if not dry_run:
+        rendered_files = {
+            Path(update["path"]): yaml.safe_dump(
+                update["model_metadata"],
+                allow_unicode=True,
+                sort_keys=False,
+            )
+            for update in model_updates
+            if isinstance(update.get("model_metadata"), dict)
+        }
+        planned_catalog_names = set(write_result.get("written_names") or [])
+        catalog_files, _deleted, _written = _render_generated_catalog_files(
+            project,
+            discovered_catalog,
+            enabled=bool(planned_catalog_names),
+        )
+        catalog_paths = business_semantics_paths(project)
+        rendered_files.update(
+            {
+                path: content
+                for path, content in catalog_files.items()
+                if any(
+                    path == catalog_paths.get(name)
+                    for name in planned_catalog_names
+                )
+            }
+        )
 
-    return {
+        def clear_discovery_caches() -> None:
+            import dw_refactor_agent.config as _config
+
+            _config.clear_model_metadata_cache()
+            _config.clear_business_semantics_cache()
+            _config.clear_naming_config_cache()
+
+        try:
+            publication_outcome = transactional_metadata_publication(
+                project,
+                rendered_files,
+                delete_paths=tuple(
+                    Path(path)
+                    for path in write_result.get("legacy_paths_to_remove")
+                    or []
+                ),
+                expected_snapshot=base_formal_snapshot,
+            )
+        except MetadataPublicationError as exc:
+            publication_outcome = exc.outcome
+            publication_error = f"{type(exc).__name__}: {exc}"
+        if publication_outcome.formal_files_state == "published":
+            clear_discovery_caches()
+            write_result["updated"] = bool(write_result.get("changed"))
+            write_result["removed_legacy_paths"] = list(
+                write_result.get("legacy_paths_to_remove") or []
+            )
+            for update in model_updates:
+                update["updated"] = True
+
+    for update in model_updates:
+        update.pop("model_metadata", None)
+
+    result = {
         "project": project,
         "source": "llm_catalog_discovery",
         "path": write_result["path"],
@@ -1118,7 +1372,23 @@ def run_catalog_discovery(
         ),
         "model_change_count": len(model_updates),
         "tables": [result_for_report(result) for result in results],
+        "publication": {
+            "status": (
+                "dry_run"
+                if dry_run
+                else (
+                    "published"
+                    if publication_outcome.formal_files_state == "published"
+                    else ("blocked" if publication_error else "unchanged")
+                )
+            ),
+            "published": publication_outcome.formal_files_state == "published",
+            **publication_outcome.to_dict(),
+        },
     }
+    if publication_error:
+        result["publication"]["error"] = publication_error
+    return result
 
 
 def result_for_report(
@@ -1291,38 +1561,48 @@ def run_metadata_write(
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
-    plan = _metadata_flow_plan_for_write(
-        project,
-        write_scope=write_scope,
-        update_catalog=update_catalog,
-        model_metadata=model_metadata,
-        metric_groups=metric_groups,
-        model_paths=model_paths,
-        resolution_policy=resolution_policy,
-    )
-    if business_semantics_catalog is not None:
-        base_catalog = copy.deepcopy(business_semantics_catalog)
-        catalog_report = {
-            "catalog_initialized": False,
-            "catalog_init_written_names": [],
-            "planned_catalog_written_names": [],
-        }
-    elif plan.catalog_plan.ensure_skeleton:
-        base_catalog, catalog_report = _ensure_metadata_catalog_skeleton(
+
+    def load_publication_inputs():
+        import dw_refactor_agent.config as _config
+
+        _config.clear_model_metadata_cache()
+        _config.clear_business_semantics_cache()
+        loaded_plan = _metadata_flow_plan_for_write(
             project,
-            dry_run=dry_run,
+            write_scope=write_scope,
+            update_catalog=update_catalog,
+            model_metadata=model_metadata,
+            metric_groups=metric_groups,
+            model_paths=model_paths,
+            resolution_policy=resolution_policy,
         )
-    else:
-        base_catalog = (
-            business_semantics_catalog
-            if business_semantics_catalog is not None
-            else load_business_semantics_catalog(project)
-        )
-        catalog_report = {
-            "catalog_initialized": False,
-            "catalog_init_written_names": [],
-            "planned_catalog_written_names": [],
-        }
+        if business_semantics_catalog is not None:
+            loaded_catalog = copy.deepcopy(business_semantics_catalog)
+            loaded_report = {
+                "catalog_initialized": False,
+                "catalog_init_written_names": [],
+                "planned_catalog_written_names": [],
+                "planned_catalog_deleted_files": [],
+            }
+        elif loaded_plan.catalog_plan.ensure_skeleton:
+            loaded_catalog, loaded_report = _ensure_metadata_catalog_skeleton(
+                project,
+                dry_run=True,
+            )
+        else:
+            loaded_catalog = load_business_semantics_catalog(project)
+            loaded_report = {
+                "catalog_initialized": False,
+                "catalog_init_written_names": [],
+                "planned_catalog_written_names": [],
+                "planned_catalog_deleted_files": [],
+            }
+        return loaded_plan, loaded_catalog, loaded_report
+
+    (
+        (plan, base_catalog, catalog_report),
+        base_formal_snapshot,
+    ) = read_consistent_metadata_snapshot(project, load_publication_inputs)
     catalog_update_report = _empty_catalog_update_report()
     data = (
         lineage_data
@@ -1402,7 +1682,7 @@ def run_metadata_write(
             )
         ),
         asset_content=asset_content,
-        business_semantics_catalog=business_semantics_catalog,
+        business_semantics_catalog=base_catalog,
         local_result_resolver=(
             resolve_local_result if plan.mode == "generate" else None
         ),
@@ -1424,9 +1704,9 @@ def run_metadata_write(
         project,
         results,
         plan,
-        dry_run=dry_run,
-        use_plan_existing_metadata=model_metadata is not None,
-        include_model_metadata=include_model_metadata,
+        dry_run=True,
+        use_plan_existing_metadata=True,
+        include_model_metadata=True,
     )
     reports = [
         result_for_report(
@@ -1454,8 +1734,85 @@ def run_metadata_write(
         base_catalog=base_catalog,
         model_metadata=plan.base_model_metadata,
         resolution_policy=plan.resolution_policy,
-        dry_run=dry_run,
+        dry_run=True,
     )
+
+    publication_outcome = MetadataPublicationOutcome(
+        formal_files_state="unchanged",
+        finalization_status="not_started",
+        recovery_required=False,
+    )
+    publication_error = None
+    if not dry_run:
+        rendered_files = {
+            Path(update["path"]): yaml.safe_dump(
+                update["model_metadata"],
+                allow_unicode=True,
+                sort_keys=False,
+            )
+            for update in yaml_updates
+            if update.get("changed")
+            and isinstance(update.get("model_metadata"), dict)
+        }
+        planned_catalog_names = set(
+            catalog_report.get("planned_catalog_written_names") or []
+        )
+        if planned_catalog_names:
+            catalog_files, _catalog_deletes, _catalog_names = (
+                _render_generated_catalog_files(
+                    project,
+                    base_catalog,
+                    enabled=True,
+                )
+            )
+            catalog_paths = business_semantics_paths(project)
+            rendered_files.update(
+                {
+                    path: content
+                    for path, content in catalog_files.items()
+                    if any(
+                        path == catalog_paths.get(name)
+                        for name in planned_catalog_names
+                    )
+                }
+            )
+
+        def clear_publication_caches() -> None:
+            import dw_refactor_agent.config as _config
+
+            _config.clear_model_metadata_cache()
+            _config.clear_business_semantics_cache()
+            _config.clear_naming_config_cache()
+
+        try:
+            publication_outcome = transactional_metadata_publication(
+                project,
+                rendered_files,
+                delete_paths=tuple(
+                    Path(path)
+                    for path in catalog_report.get(
+                        "planned_catalog_deleted_files"
+                    )
+                    or []
+                ),
+                expected_snapshot=base_formal_snapshot,
+            )
+        except MetadataPublicationError as exc:
+            publication_outcome = exc.outcome
+            publication_error = f"{type(exc).__name__}: {exc}"
+        if publication_outcome.formal_files_state == "published":
+            clear_publication_caches()
+            for update in yaml_updates:
+                update["updated"] = bool(update.get("changed"))
+            catalog_report["catalog_init_written_names"] = sorted(
+                planned_catalog_names
+            )
+            catalog_report["planned_catalog_written_names"] = []
+            catalog_report["planned_catalog_deleted_files"] = []
+
+    if not include_model_metadata:
+        for update in yaml_updates:
+            update.pop("model_metadata", None)
 
     result = {
         "project": project,
@@ -1513,7 +1870,22 @@ def run_metadata_write(
         ),
         "model_change_count": len(yaml_updates),
         "skipped_model_updates": skipped_updates,
+        "publication": {
+            "status": (
+                "dry_run"
+                if dry_run
+                else (
+                    "published"
+                    if publication_outcome.formal_files_state == "published"
+                    else ("blocked" if publication_error else "unchanged")
+                )
+            ),
+            "published": publication_outcome.formal_files_state == "published",
+            **publication_outcome.to_dict(),
+        },
     }
+    if publication_error:
+        result["publication"]["error"] = publication_error
     result.update(catalog_report)
     result.update(catalog_update_report)
     return result
