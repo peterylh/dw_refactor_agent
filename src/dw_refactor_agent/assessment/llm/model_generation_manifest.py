@@ -36,6 +36,10 @@ from dw_refactor_agent.config.semantics import (
     load_business_semantics_catalog_from_dir,
 )
 from dw_refactor_agent.ddl_deriver.ddl_deriver import parse_create_table
+from dw_refactor_agent.execution.model_config import (
+    ExecutionConfigError,
+    slice_config_from_mapping,
+)
 from dw_refactor_agent.lineage.identifiers import (
     qualified_table_name,
     short_table_name,
@@ -45,8 +49,10 @@ from dw_refactor_agent.lineage.identifiers import (
 from dw_refactor_agent.lineage.sql_task_facts import extract_task_table_facts
 
 ABSENT_CONTENT_HASH = "absent"
-MANIFEST_SCHEMA_VERSION = 2
+MANIFEST_SCHEMA_VERSION = 3
 INSPECTION_LAYERS = frozenset({"DIM", "DWD", "DWS"})
+SLICE_SOURCE_SQL_INFERRED = "sql_inferred"
+SLICE_SOURCE_WAREHOUSE_DEFAULT = "warehouse_default"
 
 
 def _content_hash(content: bytes) -> str:
@@ -144,6 +150,57 @@ def _sorted_unique_errors(
     )
 
 
+def _resolve_generate_execution_slice(
+    table_name: str,
+    execution: dict[str, Any],
+    project_config: dict[str, Any],
+) -> tuple[dict[str, Any], str, tuple[dict[str, str], ...]]:
+    """Copy an eligible warehouse default into a cold-start contract."""
+    resolved = dict(execution)
+    if resolved.get("slice"):
+        return resolved, SLICE_SOURCE_SQL_INFERRED, ()
+
+    materialized = str(resolved.get("materialized") or "").casefold()
+    execution_mode = str(resolved.get("mode") or "task").casefold()
+    if materialized != "incremental" or execution_mode == "taskless":
+        return resolved, "", ()
+
+    warehouse_execution = project_config.get("execution")
+    if not isinstance(warehouse_execution, dict):
+        return resolved, "", ()
+    raw_default_slice = warehouse_execution.get("default_slice")
+    if raw_default_slice in (None, ""):
+        return resolved, "", ()
+
+    try:
+        default_slice = slice_config_from_mapping(
+            table_name,
+            raw_default_slice,
+            label="execution.default_slice",
+        )
+    except ExecutionConfigError as exc:
+        return (
+            resolved,
+            "",
+            (
+                _preflight_error(
+                    "execution_slice_invalid",
+                    table=table_name,
+                    message=str(exc),
+                ),
+            ),
+        )
+
+    if default_slice is None:  # pragma: no cover - guarded above
+        return resolved, "", ()
+    resolved["slice"] = {
+        "param": default_slice.param,
+        "column": default_slice.column,
+        "period": default_slice.period,
+    }
+    return resolved, SLICE_SOURCE_WAREHOUSE_DEFAULT, ()
+
+
 @dataclass(frozen=True)
 class ExcludedGenerateDataset:
     """A task output intentionally excluded from the managed model set."""
@@ -184,6 +241,7 @@ class ManagedGenerateAsset:
     producer_mode: str
     producer_reason: str
     execution_contract_json: str
+    execution_slice_source: str
     execution_evidence_hash: str
     lineage_evidence_hash: str
     inspection_target: bool
@@ -245,6 +303,7 @@ class ManagedGenerateAsset:
             "producer_mode": self.producer_mode,
             "producer_reason": self.producer_reason,
             "execution_contract": self.execution_contract(),
+            "execution_slice_source": self.execution_slice_source,
             "execution_evidence_hash": self.execution_evidence_hash,
             "lineage_evidence_hash": self.lineage_evidence_hash,
             "inspection_target": self.inspection_target,
@@ -1081,16 +1140,29 @@ def build_generate_asset_preflight(
             execution_asset,
             layer=record["operational_layer"],
         )
-        errors.extend(
-            _validate_execution(
+        execution, execution_slice_source, default_slice_errors = (
+            _resolve_generate_execution_slice(
                 record["short_name"],
-                {
-                    "layer": record["operational_layer"],
-                    "execution": execution,
-                },
-                execution_asset,
+                execution,
+                config,
             )
         )
+        execution_errors = _validate_execution(
+            record["short_name"],
+            {
+                "layer": record["operational_layer"],
+                "execution": execution,
+            },
+            execution_asset,
+        )
+        if default_slice_errors:
+            execution_errors = [
+                error
+                for error in execution_errors
+                if error.get("type") != "execution_slice_missing"
+            ]
+        errors.extend(default_slice_errors)
+        errors.extend(execution_errors)
         execution_json = _json_bytes(execution).decode(TEXT_ENCODING)
         assets.append(
             ManagedGenerateAsset(
@@ -1118,9 +1190,11 @@ def build_generate_asset_preflight(
                 producer_mode=producer_mode,
                 producer_reason=producer_reason,
                 execution_contract_json=execution_json,
+                execution_slice_source=execution_slice_source,
                 execution_evidence_hash=_json_hash(
                     {
                         "execution": execution,
+                        "execution_slice_source": execution_slice_source,
                         "producer_mode": producer_mode,
                         "producer_reason": producer_reason,
                         "task_hashes": [

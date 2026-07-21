@@ -160,6 +160,7 @@ def test_manifest_is_immutable_and_frozen_inputs_drive_candidate(
         "producer_mode",
         "producer_reason",
         "execution_contract",
+        "execution_slice_source",
         "execution_evidence_hash",
         "lineage_evidence_hash",
         "inspection_target",
@@ -172,6 +173,7 @@ def test_manifest_is_immutable_and_frozen_inputs_drive_candidate(
         "materialized": "full",
         "full_refresh_strategy": "replace_all",
     }
+    assert asset.execution_slice_source == ""
     assert asset.inspection_content()["ddl"] == ddl_path.read_text(
         encoding="utf-8"
     )
@@ -226,6 +228,234 @@ def test_manifest_is_immutable_and_frozen_inputs_drive_candidate(
     assert second_plan.model_metadata["dwd_orders"]["layer"] == "DWD"
 
 
+def test_warehouse_default_slice_is_copied_for_fixed_date_sql(
+    tmp_path,
+    monkeypatch,
+):
+    project = "manifest_default_slice"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    (project_dir / "mid" / "ddl" / "dwd_orders.sql").write_text(
+        "CREATE TABLE demo.dwd_orders (id BIGINT, STAT_DATE DATE);\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dwd_orders.sql").write_text(
+        "DELETE FROM demo.dwd_orders "
+        "WHERE STAT_DATE = '2025-01-15';\n"
+        "INSERT INTO demo.dwd_orders SELECT 1, '2025-01-15';\n",
+        encoding="utf-8",
+    )
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "default_slice": {
+            "param": " etl_date ",
+            "column": " stat_date ",
+            "period": " d ",
+        }
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+    dry_run = run_generate_model_metadata(project, dry_run=True)
+    formal = run_generate_model_metadata(project, dry_run=False)
+    saved = yaml.safe_load(
+        (project_dir / "mid" / "models" / "dwd_orders.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    expected_execution = {
+        "materialized": "incremental",
+        "full_refresh_strategy": "replay_slices",
+        "slice": {
+            "param": "etl_date",
+            "column": "stat_date",
+            "period": "D",
+        },
+    }
+    assert preflight.passed
+    assert preflight.manifest.assets[0].execution_contract() == (
+        expected_execution
+    )
+    assert preflight.manifest.assets[0].execution_slice_source == (
+        "warehouse_default"
+    )
+    assert (
+        dry_run["asset_manifest"]["assets"][0]["execution_contract"]
+        == expected_execution
+    )
+    assert (
+        dry_run["asset_manifest"]["assets"][0]["execution_slice_source"]
+        == "warehouse_default"
+    )
+    assert formal["publication"]["status"] == "published_with_quarantine"
+    assert saved["execution"] == expected_execution
+    assert "execution_slice_source" not in saved
+
+
+def test_sql_inferred_slice_wins_over_warehouse_default(
+    tmp_path,
+    monkeypatch,
+):
+    project = "manifest_sql_slice_priority"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    (project_dir / "mid" / "ddl" / "dwd_orders.sql").write_text(
+        "CREATE TABLE demo.dwd_orders "
+        "(id BIGINT, stat_date DATE, fallback_month VARCHAR(7));\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dwd_orders.sql").write_text(
+        "DELETE FROM demo.dwd_orders WHERE stat_date = @etl_date;\n"
+        "INSERT INTO demo.dwd_orders SELECT 1, @etl_date, 'unused';\n",
+        encoding="utf-8",
+    )
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "default_slice": {
+            "param": "run_month",
+            "column": "fallback_month",
+            "period": "M",
+        }
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+    asset = preflight.manifest.assets[0]
+
+    assert preflight.passed
+    assert asset.execution_contract()["slice"] == {
+        "param": "etl_date",
+        "column": "stat_date",
+        "period": "D",
+    }
+    assert asset.execution_slice_source == "sql_inferred"
+
+
+def test_warehouse_default_slice_column_must_exist_in_ddl(
+    tmp_path,
+    monkeypatch,
+):
+    project = "manifest_default_slice_column_missing"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    (project_dir / "mid" / "ddl" / "dwd_orders.sql").write_text(
+        "CREATE TABLE demo.dwd_orders (id BIGINT, stat_date DATE);\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dwd_orders.sql").write_text(
+        "INSERT INTO demo.dwd_orders SELECT 1, '2025-01-15';\n",
+        encoding="utf-8",
+    )
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "default_slice": {
+            "param": "etl_date",
+            "column": "missing_date",
+            "period": "D",
+        }
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+
+    assert not preflight.passed
+    assert preflight.errors == (
+        {
+            "type": "execution_slice_column_missing",
+            "table": "dwd_orders",
+            "message": (
+                "execution.slice.column=missing_date is absent from DDL"
+            ),
+        },
+    )
+
+
+@pytest.mark.parametrize("missing_field", ["param", "column", "period"])
+def test_warehouse_default_slice_requires_every_field(
+    tmp_path,
+    monkeypatch,
+    missing_field,
+):
+    project = f"manifest_default_slice_missing_{missing_field}"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    (project_dir / "mid" / "ddl" / "dwd_orders.sql").write_text(
+        "CREATE TABLE demo.dwd_orders (id BIGINT, stat_date DATE);\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dwd_orders.sql").write_text(
+        "INSERT INTO demo.dwd_orders SELECT 1, '2025-01-15';\n",
+        encoding="utf-8",
+    )
+    default_slice = {
+        "param": "etl_date",
+        "column": "stat_date",
+        "period": "D",
+    }
+    default_slice.pop(missing_field)
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "default_slice": default_slice
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+
+    assert not preflight.passed
+    assert _error_types(preflight) == {"execution_slice_invalid"}
+    assert (
+        "execution.default_slice requires param, column, and period"
+        in (preflight.errors[0]["message"])
+    )
+
+
+def test_warehouse_default_slice_period_uses_runtime_constraints(
+    tmp_path,
+    monkeypatch,
+):
+    project = "manifest_default_slice_period_invalid"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    (project_dir / "mid" / "ddl" / "dwd_orders.sql").write_text(
+        "CREATE TABLE demo.dwd_orders (id BIGINT, stat_date DATE);\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dwd_orders.sql").write_text(
+        "INSERT INTO demo.dwd_orders SELECT 1, '2025-01-15';\n",
+        encoding="utf-8",
+    )
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "default_slice": {
+            "param": "etl_date",
+            "column": "stat_date",
+            "period": "Y",
+        }
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+
+    assert not preflight.passed
+    assert _error_types(preflight) == {"execution_slice_invalid"}
+    assert (
+        "execution.default_slice.period must be one of"
+        in (preflight.errors[0]["message"])
+    )
+
+
+def test_full_model_does_not_copy_warehouse_default_slice(
+    tmp_path,
+    monkeypatch,
+):
+    project = "manifest_full_ignores_default_slice"
+    project_dir = _configure_project(tmp_path, monkeypatch, project)
+    _write_managed_table(project_dir)
+    config.PROJECT_CONFIG[project]["execution"] = {
+        "default_slice": {
+            "param": "etl_date",
+            "column": "stat_date",
+            "period": "D",
+        }
+    }
+
+    preflight = build_generate_asset_preflight(project, _catalog_payload())
+    asset = preflight.manifest.assets[0]
+
+    assert preflight.passed
+    assert asset.execution_contract() == {
+        "materialized": "full",
+        "full_refresh_strategy": "replace_all",
+    }
+    assert asset.execution_slice_source == ""
+
+
 def test_external_taskless_ddl_only_table_can_complete_cold_start(
     tmp_path,
     monkeypatch,
@@ -238,13 +468,18 @@ def test_external_taskless_ddl_only_table_can_complete_cold_start(
         encoding="utf-8",
     )
     config.PROJECT_CONFIG[project]["execution"] = {
+        "default_slice": {
+            "param": "etl_date",
+            "column": "currency_code",
+            "period": "D",
+        },
         "taskless_assets": [
             {
                 "table": "internal.demo.dim_currency",
                 "producer": "external",
                 "reason": "maintained_by_reference_data_sync",
             }
-        ]
+        ],
     }
 
     preflight = build_generate_asset_preflight(project, _catalog_payload())
@@ -267,6 +502,7 @@ def test_external_taskless_ddl_only_table_can_complete_cold_start(
     assert asset.producer_mode == "external"
     assert asset.producer_reason == "maintained_by_reference_data_sync"
     assert asset.execution_contract() == {"mode": "taskless"}
+    assert asset.execution_slice_source == ""
     assert preflight.manifest.to_dict()["taskless_tables"] == [
         {
             "canonical_identity": "internal.demo.dim_currency",
