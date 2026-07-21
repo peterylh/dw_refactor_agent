@@ -28,6 +28,7 @@ TEST_TYPE_BY_FILE = {
     "tests/assess/test_context_builder.py": "unit",
     "tests/assess/test_generation_manifest.py": "contract",
     "tests/assess/test_generation_candidate_resolver.py": "unit",
+    "tests/assess/test_governed_model_publication.py": "scenario",
     "tests/assess/test_inspection_cache_policy.py": "contract",
     "tests/assess/test_inspection_contract.py": "unit",
     "tests/assess/test_inspection_recovery.py": "unit",

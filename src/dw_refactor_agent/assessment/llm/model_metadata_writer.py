@@ -62,9 +62,11 @@ from dw_refactor_agent.assessment.llm.model_metadata_publication import (
     transactional_metadata_publication,
 )
 from dw_refactor_agent.assessment.llm.publication_transitions import (
+    materialize_refresh_models,
     plan_inspection_run_transition,
     plan_no_llm_generation_decisions,
     plan_publication_transition,
+    plan_refresh_transitions,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
     DEFAULT_MIN_CACHEABLE_CONFIDENCE,
@@ -86,6 +88,7 @@ from dw_refactor_agent.assessment.semantic_models import (
     AssessmentModelSemantics,
 )
 from dw_refactor_agent.config import (
+    MODEL_SECTIONS,
     PROJECT_CONFIG,
     PROJECT_ROOT,  # noqa: F401 - compatibility for callers overriding project roots
     TEXT_ENCODING,
@@ -94,6 +97,10 @@ from dw_refactor_agent.config import (
     business_semantics_paths,
     load_model_metadata,
     model_metadata_result_path,
+)
+from dw_refactor_agent.lineage.identifiers import (
+    identifier_match_key,
+    short_table_name,
 )
 from dw_refactor_agent.lineage.table_graph import load_lineage_data
 
@@ -122,6 +129,37 @@ DDL_NON_COLUMN_PREFIXES = {
     "PROPERTIES",
     "UNIQUE",
 }
+
+_REFRESH_SCOPE_SECTIONS = {
+    "all": MODEL_SECTIONS,
+    "table": ("classification", "business_semantics"),
+    "metrics": ("metrics",),
+    "grain": ("entities", "grain"),
+    "business": ("business_semantics",),
+}
+
+
+def _unique_model_name(
+    models: dict[str, dict[str, Any]], reference: str
+) -> str:
+    reference_key = identifier_match_key(reference)
+    exact = [
+        name for name in models if identifier_match_key(name) == reference_key
+    ]
+    if len(exact) == 1:
+        return exact[0]
+    short_key = identifier_match_key(short_table_name(reference))
+    matches = [
+        name
+        for name in models
+        if identifier_match_key(short_table_name(name)) == short_key
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"model identity must resolve uniquely: {reference!r}"
+        )
+    return matches[0]
+
 
 from dw_refactor_agent.assessment.llm.model_metadata_catalog import (  # noqa: F401
     _business_processes_from_result,
@@ -360,6 +398,7 @@ def _preflight_blocked_generate_result(
     write_scope: str,
     update_catalog: bool,
     replace_existing_models: bool,
+    dry_run: bool,
 ) -> dict[str, Any]:
     published_models = load_model_metadata(project)
     result = {
@@ -388,8 +427,21 @@ def _preflight_blocked_generate_result(
         "published_catalog_summary": _catalog_metadata_summary(catalog),
         "candidate_models": {},
         "publication": {
-            "status": "blocked",
+            "status": "dry_run" if dry_run else "blocked",
+            "candidate_status": "blocked",
             "published": False,
+            "complete": False,
+            "would_publish_status": "blocked" if dry_run else "",
+            "formal_files_state": "unchanged",
+            "finalization_status": "not_started",
+            "recovery_required": False,
+            "recoverable": False,
+            "retryable": False,
+            "quarantined_table_count": 0,
+            "withheld_section_count": 0,
+            "reason_count": 0,
+            "quarantined_tables": [],
+            "hard_block_count": len(preflight.errors),
             "validation": preflight.validation(),
         },
         "checkpoint": {
@@ -447,6 +499,7 @@ def run_generate_model_metadata(
     write_scope: str = "all",
     update_catalog: bool = True,
     replace_existing_models: bool = True,
+    require_complete: bool = False,
     show_progress: bool = False,
     expose_layer_hints: bool = True,
 ) -> dict[str, Any]:
@@ -470,6 +523,7 @@ def run_generate_model_metadata(
             write_scope=write_scope,
             update_catalog=update_catalog,
             replace_existing_models=replace_existing_models,
+            dry_run=dry_run,
         )
     if api_key:
         try:
@@ -491,6 +545,7 @@ def run_generate_model_metadata(
                     write_scope=write_scope,
                     update_catalog=update_catalog,
                     replace_existing_models=replace_existing_models,
+                    dry_run=dry_run,
                 )
     catalog = preflight.manifest.catalog_data()
     base_plan = plan_generate_model_metadata(
@@ -609,75 +664,52 @@ def run_generate_model_metadata(
             llm_result=llm_result,
             catalog=confirmed_catalog,
         )
+        pre_resolution_validation = publication_validation
         inspection_transition = plan_inspection_run_transition(
             llm_enabled=llm_result is not None,
             inspection_targets=preflight.manifest.inspection_target_set,
             reports=(llm_result or {}).get("tables") or [],
         )
-        resolved_candidate = None
-        effective_model_metadata = final_model_metadata
-        if llm_result is not None or dry_run:
-            local_decisions = (llm_result or {}).get(
-                "local_section_decisions"
-            ) or []
-            if llm_result is None:
-                local_decisions = plan_no_llm_generation_decisions(
-                    preflight.manifest.inspection_target_set,
-                    final_model_metadata,
-                )
-            resolved_candidate = resolve_generation_candidate(
+        local_decisions = (llm_result or {}).get(
+            "local_section_decisions"
+        ) or []
+        if llm_result is None:
+            local_decisions = plan_no_llm_generation_decisions(
+                preflight.manifest.inspection_target_set,
                 final_model_metadata,
-                inspection_reports=(llm_result or {}).get("tables") or [],
-                catalog=confirmed_catalog,
-                operational_layers={
-                    asset.short_name: asset.operational_layer
-                    for asset in preflight.manifest.assets
-                },
-                expected_tables=[
-                    asset.short_name for asset in preflight.manifest.assets
-                ],
-                validation_assets=preflight.manifest.validation_assets(),
-                generation_issues=publication_validation.get("issues") or [],
-                local_decisions=local_decisions,
-                lineage_data=preflight.manifest.lineage_data(),
             )
-            effective_model_metadata = resolved_candidate.models
-            if llm_result is not None and resolved_candidate.status in {
-                "blocked",
-                "quarantined",
-            }:
-                candidate_errors = (
-                    resolved_candidate.validation.get("errors") or []
-                )
-                if resolved_candidate.status == "quarantined":
-                    candidate_errors = [
-                        {
-                            "type": "quarantine_candidate_not_publishable",
-                            "table": table_name,
-                            "message": (
-                                "formal publication of quarantined generation "
-                                "candidates is not enabled"
-                            ),
-                        }
-                        for table_name in resolved_candidate.quarantined_tables
-                    ]
-                publication_validation = {
-                    "status": "blocked",
-                    "stage": (
-                        "quarantine_publication_gate"
-                        if resolved_candidate.status == "quarantined"
-                        else "effective_candidate"
-                    ),
-                    "error_count": len(candidate_errors),
-                    "errors": candidate_errors,
-                    "issues": [],
-                    "blocked_tables": list(
-                        resolved_candidate.quarantined_tables
-                        if resolved_candidate.status == "quarantined"
-                        else resolved_candidate.hard_blocked_tables
-                    ),
-                    "reinspection_tables": [],
-                }
+        resolved_candidate = resolve_generation_candidate(
+            final_model_metadata,
+            inspection_reports=(llm_result or {}).get("tables") or [],
+            catalog=confirmed_catalog,
+            operational_layers={
+                asset.short_name: asset.operational_layer
+                for asset in preflight.manifest.assets
+            },
+            expected_tables=[
+                asset.short_name for asset in preflight.manifest.assets
+            ],
+            validation_assets=preflight.manifest.validation_assets(),
+            generation_issues=publication_validation.get("issues") or [],
+            local_decisions=local_decisions,
+            lineage_data=preflight.manifest.lineage_data(),
+        )
+        effective_model_metadata = resolved_candidate.models
+        publication_validation = resolved_candidate.validation
+        candidate_status = resolved_candidate.status
+        if pre_resolution_validation.get(
+            "status"
+        ) == "blocked" and not pre_resolution_validation.get("issues"):
+            publication_validation = pre_resolution_validation
+            candidate_status = "blocked"
+        if candidate_status in {"active", "passed"}:
+            candidate_status = "complete"
+        publication_transition = plan_publication_transition(
+            candidate_status=candidate_status,
+            inspection_transition=inspection_transition,
+            dry_run=dry_run,
+            require_complete=require_complete,
+        )
         (
             candidate_table_names,
             candidate_declared_names,
@@ -685,7 +717,7 @@ def run_generate_model_metadata(
         ) = _candidate_model_publication_targets(
             project,
             generate_plan,
-            final_model_metadata,
+            effective_model_metadata,
         )
         should_publish = False
         catalog_rendered_files: dict[Path, str] = {}
@@ -700,7 +732,7 @@ def run_generate_model_metadata(
             finalization_status="not_started",
             recovery_required=False,
         )
-        if not dry_run and publication_validation["status"] != "blocked":
+        if publication_transition.published:
             with metadata_publication_lock(project):
                 current_catalog, _current_catalog_report = (
                     _fresh_generate_catalog_snapshot(
@@ -740,7 +772,7 @@ def run_generate_model_metadata(
                         ) = _write_generated_model_metadata(
                             project,
                             generate_plan,
-                            final_model_metadata,
+                            effective_model_metadata,
                             dry_run=False,
                             delete_existing=replace_existing_models,
                             refinement_updates=refinement_updates,
@@ -779,7 +811,7 @@ def run_generate_model_metadata(
                         ) = _write_generated_model_metadata(
                             project,
                             generate_plan,
-                            final_model_metadata,
+                            effective_model_metadata,
                             dry_run=True,
                             delete_existing=replace_existing_models,
                             refinement_updates=refinement_updates,
@@ -791,7 +823,7 @@ def run_generate_model_metadata(
                 _write_generated_model_metadata(
                     project,
                     generate_plan,
-                    final_model_metadata,
+                    effective_model_metadata,
                     dry_run=True,
                     delete_existing=replace_existing_models,
                     refinement_updates=refinement_updates,
@@ -809,22 +841,17 @@ def run_generate_model_metadata(
                     generate_plan.write_targets.planned_deleted_model_files
                 )
         publication_blocked = publication_validation["status"] == "blocked"
-        candidate_status = (
-            resolved_candidate.status
-            if resolved_candidate is not None
-            else ("blocked" if publication_blocked else "complete")
-        )
-        if candidate_status in {"active", "passed"}:
-            candidate_status = "complete"
-        publication_transition = plan_publication_transition(
-            candidate_status=candidate_status,
-            inspection_transition=inspection_transition,
-            dry_run=dry_run,
-        )
+        if publication_blocked and not should_publish:
+            publication_transition = plan_publication_transition(
+                candidate_status="blocked",
+                inspection_transition=inspection_transition,
+                dry_run=dry_run,
+                require_complete=require_complete,
+            )
         if checkpoint:
             try:
                 checkpoint.finish(
-                    status="blocked" if publication_blocked else "published",
+                    status=publication_transition.status,
                     published=should_publish,
                     validation=publication_validation,
                 )
@@ -845,7 +872,7 @@ def run_generate_model_metadata(
         )
 
     published_model_metadata = (
-        final_model_metadata
+        effective_model_metadata
         if should_publish
         else load_model_metadata(project)
     )
@@ -924,20 +951,17 @@ def run_generate_model_metadata(
                 table_name: dict(metadata)
                 for table_name, metadata in effective_model_metadata.items()
             }
-            if publication_blocked or dry_run
+            if not should_publish
             else {}
         ),
         "publication": {
-            "status": (
-                "published"
-                if should_publish
-                else (
-                    "blocked"
-                    if publication_blocked
-                    else ("dry_run" if dry_run else "published")
-                )
-            ),
+            "status": publication_transition.status,
             "published": should_publish,
+            "candidate_status": publication_transition.candidate_status,
+            "complete": publication_transition.complete,
+            "would_publish_status": (
+                publication_transition.would_publish_status
+            ),
             "formal_files_state": publication_outcome.formal_files_state,
             "finalization_status": (
                 "failed"
@@ -948,6 +972,27 @@ def run_generate_model_metadata(
             "recovery_required": bool(
                 checkpoint_finalization_error
                 or publication_outcome.recovery_required
+            ),
+            "reason": publication_transition.reason,
+            "recoverable": publication_transition.recoverable,
+            "retryable": publication_transition.retryable,
+            "retry_action": publication_transition.retry_action,
+            "quarantined_table_count": len(
+                resolved_candidate.quarantined_tables
+            ),
+            "withheld_section_count": sum(
+                len(decision.quarantined_sections)
+                for decision in resolved_candidate.decisions
+            ),
+            "reason_count": sum(
+                len(decision.reasons_for(section))
+                for decision in resolved_candidate.decisions
+                for section in decision.quarantined_sections
+            ),
+            "quarantined_tables": list(resolved_candidate.quarantined_tables),
+            "hard_block_count": int(
+                publication_validation.get("error_count")
+                or len(publication_validation.get("errors") or [])
             ),
             "validation": publication_validation,
             "inspection_transition": inspection_transition.to_dict(),
@@ -1539,6 +1584,7 @@ def run_metadata_write(
     request_timeout: int = 60,
     no_cache: bool = False,
     dry_run: bool = False,
+    require_complete: bool = False,
     write_scope: str = "all",
     show_progress: bool = False,
     model_metadata: dict[str, dict[str, Any]] | None = None,
@@ -1643,8 +1689,8 @@ def run_metadata_write(
             if table_name.casefold() == result.table_name.casefold()
         ]
         metadata = matching_models[0] if len(matching_models) == 1 else {}
-        local_proposal_results.setdefault(
-            result.table_name.casefold(), copy.deepcopy(result)
+        local_proposal_results[result.table_name.casefold()] = copy.deepcopy(
+            result
         )
         effective_result, decision = prepare_inspection_for_propagation(
             result,
@@ -1683,9 +1729,7 @@ def run_metadata_write(
         ),
         asset_content=asset_content,
         business_semantics_catalog=base_catalog,
-        local_result_resolver=(
-            resolve_local_result if plan.mode == "generate" else None
-        ),
+        local_result_resolver=resolve_local_result,
         result_layer_resolver=lambda _ctx, result: layer_for_model(
             result,
             existing_model=(plan.base_model_metadata or {}).get(
@@ -1698,8 +1742,12 @@ def run_metadata_write(
     metric_contexts = inspection.metric_contexts
     metadata_only_contexts = inspection.metadata_only_contexts
     results = inspection.results
+    reported_results = [
+        local_proposal_results.get(result.table_name.casefold(), result)
+        for result in results
+    ]
     if inspection_complete_callback is not None:
-        inspection_complete_callback(results)
+        inspection_complete_callback(reported_results)
     yaml_updates, skipped_updates = write_model_updates_from_plan(
         project,
         results,
@@ -1716,7 +1764,7 @@ def run_metadata_write(
             ),
             resolution_policy=plan.resolution_policy,
         )
-        for result in results
+        for result in reported_results
     ]
     catalog_update_report = _merge_llm_catalog_discoveries(
         project,
@@ -1728,13 +1776,154 @@ def run_metadata_write(
                     local_proposal_results.items()
                 )
             ]
-            if plan.mode == "generate"
-            else results
         ),
         base_catalog=base_catalog,
         model_metadata=plan.base_model_metadata,
         resolution_policy=plan.resolution_policy,
         dry_run=True,
+    )
+
+    inspection_transition = plan_inspection_run_transition(
+        llm_enabled=True,
+        inspection_targets=(context.table_name for context in contexts),
+        reports=reports,
+    )
+    refresh_transition_plan = None
+    publication_validation = {
+        "status": "passed",
+        "stage": "effective_candidate",
+        "error_count": 0,
+        "errors": [],
+    }
+    candidate_status = "complete"
+    quarantined_tables: list[str] = []
+    withheld_section_count = 0
+    quarantine_reason_count = 0
+    if plan.mode == "refresh":
+        try:
+            existing_refresh_models = {}
+            candidate_refresh_models = {}
+            update_by_model_name = {}
+            for update in yaml_updates:
+                candidate_metadata = update.get("model_metadata")
+                if not isinstance(candidate_metadata, dict):
+                    continue
+                model_name = _unique_model_name(
+                    plan.base_model_metadata,
+                    str(update.get("table") or ""),
+                )
+                if model_name in candidate_refresh_models:
+                    raise ValueError(
+                        f"duplicate refresh candidate for {model_name}"
+                    )
+                existing_refresh_models[model_name] = dict(
+                    plan.base_model_metadata[model_name]
+                )
+                candidate_refresh_models[model_name] = dict(candidate_metadata)
+                update_by_model_name[model_name] = update
+            decision_items = []
+            for _table_key, decision in sorted(local_decisions.items()):
+                model_name = _unique_model_name(
+                    plan.base_model_metadata, decision.table_name
+                )
+                if model_name not in existing_refresh_models:
+                    base_metadata = dict(plan.base_model_metadata[model_name])
+                    existing_refresh_models[model_name] = base_metadata
+                    candidate_refresh_models[model_name] = dict(base_metadata)
+                    skipped = next(
+                        (
+                            item
+                            for item in skipped_updates
+                            if identifier_match_key(
+                                str(item.get("table") or "")
+                            )
+                            == identifier_match_key(decision.table_name)
+                        ),
+                        {},
+                    )
+                    update_by_model_name[model_name] = {
+                        "table": model_name,
+                        "path": str(
+                            skipped.get("path")
+                            or plan.write_targets.model_paths.get(model_name)
+                            or model_path_for_table(project, model_name)
+                        ),
+                        "status": "passed",
+                        "changed": False,
+                        "updated": False,
+                        "write_scope": write_scope,
+                    }
+                decision_items.append(decision)
+            refresh_transition_plan = plan_refresh_transitions(
+                existing_refresh_models,
+                candidate_decisions=decision_items,
+                requested_sections=_REFRESH_SCOPE_SECTIONS[write_scope],
+                retention_eligible={
+                    table_name: MODEL_SECTIONS
+                    for table_name in existing_refresh_models
+                },
+            )
+            if refresh_transition_plan.status == "blocked":
+                raise ValueError("refresh section transition is blocked")
+            effective_refresh_models = materialize_refresh_models(
+                existing_refresh_models,
+                candidate_refresh_models,
+                refresh_transition_plan,
+            )
+            effective_updates = []
+            for table_name, metadata in effective_refresh_models.items():
+                AssessmentModelSemantics.from_metadata(
+                    metadata, source=table_name
+                )
+                update = dict(update_by_model_name[table_name])
+                changed = metadata != existing_refresh_models[table_name]
+                update["changed"] = changed
+                update["updated"] = False
+                update["model_metadata"] = metadata
+                if changed:
+                    effective_updates.append(update)
+            yaml_updates = effective_updates
+            effective_views = [
+                AssessmentModelSemantics.from_metadata(
+                    metadata, source=table_name
+                )
+                for table_name, metadata in effective_refresh_models.items()
+            ]
+            if any(view.quarantined_sections for view in effective_views):
+                candidate_status = "quarantined"
+            quarantined_tables = sorted(
+                table_name
+                for table_name, view in zip(
+                    effective_refresh_models, effective_views
+                )
+                if view.quarantined_sections
+            )
+            withheld_section_count = sum(
+                len(view.quarantined_sections) for view in effective_views
+            )
+            quarantine_reason_count = sum(
+                len(view.model.governance.reasons_for(section))
+                for view in effective_views
+                for section in view.quarantined_sections
+            )
+        except (TypeError, ValueError) as exc:
+            candidate_status = "blocked"
+            publication_validation = {
+                "status": "blocked",
+                "stage": "refresh_effective_candidate",
+                "error_count": 1,
+                "errors": [
+                    {
+                        "type": "refresh_candidate_invalid",
+                        "message": str(exc),
+                    }
+                ],
+            }
+    publication_transition = plan_publication_transition(
+        candidate_status=candidate_status,
+        inspection_transition=inspection_transition,
+        dry_run=dry_run,
+        require_complete=require_complete,
     )
 
     publication_outcome = MetadataPublicationOutcome(
@@ -1743,7 +1932,7 @@ def run_metadata_write(
         recovery_required=False,
     )
     publication_error = None
-    if not dry_run:
+    if publication_transition.published:
         rendered_files = {
             Path(update["path"]): yaml.safe_dump(
                 update["model_metadata"],
@@ -1810,6 +1999,17 @@ def run_metadata_write(
             catalog_report["planned_catalog_written_names"] = []
             catalog_report["planned_catalog_deleted_files"] = []
 
+    if (
+        publication_error
+        and publication_outcome.formal_files_state != "published"
+    ):
+        publication_transition = replace(
+            publication_transition,
+            status="blocked",
+            published=False,
+            reason="publication_transaction_failed",
+        )
+
     if not include_model_metadata:
         for update in yaml_updates:
             update.pop("model_metadata", None)
@@ -1823,36 +2023,46 @@ def run_metadata_write(
         "dwd_table_count": len(inspection.dwd_contexts),
         "dws_table_count": len(inspection.dws_contexts),
         "dim_table_count": len(inspection.metadata_only_contexts),
-        "fact_table_count": sum(1 for r in results if r.is_fact_table),
-        "passed_table_count": sum(1 for r in results if r.status == "passed"),
+        "fact_table_count": sum(
+            1 for result in reported_results if result.is_fact_table
+        ),
+        "passed_table_count": sum(
+            1 for result in reported_results if result.status == "passed"
+        ),
         "warning_table_count": sum(
             1
-            for result, report in zip(results, reports)
+            for result, report in zip(reported_results, reports)
             if result.status == "warning" or report.get("metadata_warnings")
         ),
         "blocked_table_count": sum(
-            1 for r in results if r.status == "blocked"
+            1 for result in reported_results if result.status == "blocked"
         ),
-        "atomic_metric_count": sum(len(r.atomic_metrics) for r in results),
-        "derived_metric_count": sum(len(r.derived_metrics) for r in results),
+        "atomic_metric_count": sum(
+            len(result.atomic_metrics) for result in reported_results
+        ),
+        "derived_metric_count": sum(
+            len(result.derived_metrics) for result in reported_results
+        ),
         "calculated_metric_count": sum(
-            len(r.calculated_metrics) for r in results
+            len(result.calculated_metrics) for result in reported_results
         ),
-        "metric_count": sum(len(metric_names_for_model(r)) for r in results),
+        "metric_count": sum(
+            len(metric_names_for_model(result)) for result in reported_results
+        ),
         "derived_metric_violation_count": _violation_count(
-            results,
+            reported_results,
             "derived_metrics",
             existing_model_metadata=plan.base_model_metadata,
             resolution_policy=plan.resolution_policy,
         ),
         "calculated_metric_violation_count": _violation_count(
-            results,
+            reported_results,
             "calculated_metrics",
             existing_model_metadata=plan.base_model_metadata,
             resolution_policy=plan.resolution_policy,
         ),
         "non_atomic_metric_violation_count": _violation_count(
-            results,
+            reported_results,
             existing_model_metadata=plan.base_model_metadata,
             resolution_policy=plan.resolution_policy,
         ),
@@ -1871,16 +2081,29 @@ def run_metadata_write(
         "model_change_count": len(yaml_updates),
         "skipped_model_updates": skipped_updates,
         "publication": {
-            "status": (
-                "dry_run"
-                if dry_run
-                else (
-                    "published"
-                    if publication_outcome.formal_files_state == "published"
-                    else ("blocked" if publication_error else "unchanged")
-                )
+            "status": publication_transition.status,
+            "published": publication_transition.published,
+            "candidate_status": publication_transition.candidate_status,
+            "complete": publication_transition.complete,
+            "would_publish_status": (
+                publication_transition.would_publish_status
             ),
-            "published": publication_outcome.formal_files_state == "published",
+            "reason": publication_transition.reason,
+            "recoverable": publication_transition.recoverable,
+            "retryable": publication_transition.retryable,
+            "retry_action": publication_transition.retry_action,
+            "quarantined_table_count": len(quarantined_tables),
+            "withheld_section_count": withheld_section_count,
+            "reason_count": quarantine_reason_count,
+            "quarantined_tables": quarantined_tables,
+            "hard_block_count": publication_validation.get("error_count", 0),
+            "validation": publication_validation,
+            "inspection_transition": inspection_transition.to_dict(),
+            "refresh_transition": (
+                refresh_transition_plan.to_dict()
+                if refresh_transition_plan is not None
+                else {"status": "not_applicable", "transitions": []}
+            ),
             **publication_outcome.to_dict(),
         },
     }
@@ -1889,6 +2112,73 @@ def run_metadata_write(
     result.update(catalog_report)
     result.update(catalog_update_report)
     return result
+
+
+def publication_exit_code(publication: dict[str, Any]) -> int:
+    """Map the structured publication state to the documented CLI code."""
+    if publication.get("published") and (
+        publication.get("finalization_status") == "failed"
+    ):
+        return 3
+    status = str(publication.get("status") or "")
+    if status == "dry_run":
+        status = str(publication.get("would_publish_status") or "")
+    if status == "blocked":
+        return 1
+    if status in {
+        "not_published_incomplete",
+        "not_published_inspection_failure",
+    }:
+        return 2
+    if status in {"published", "published_with_quarantine"}:
+        return 0
+    return 1
+
+
+def _exit_for_publication(publication: dict[str, Any]) -> None:
+    if not publication:
+        return
+    code = publication_exit_code(publication)
+    if code:
+        summary = (
+            "发布状态: {status}; candidate={candidate}; "
+            "formal_files={formal}; finalization={finalization}".format(
+                status=publication.get("status") or "unknown",
+                candidate=publication.get("candidate_status") or "unknown",
+                formal=publication.get("formal_files_state") or "unknown",
+                finalization=(
+                    publication.get("finalization_status") or "unknown"
+                ),
+            )
+        )
+        if code == 3:
+            summary = (
+                "正式文件已经发布，但 checkpoint/report 收尾失败；"
+                "请先修复收尾状态，不要重复发布。" + summary
+            )
+            if publication.get("finalization_error"):
+                summary += "; error=" + str(publication["finalization_error"])
+        print(summary, file=sys.stderr)
+        raise SystemExit(code)
+
+
+def _write_result_report(output_path: Path, result: dict[str, Any]) -> None:
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2),
+            encoding=TEXT_ENCODING,
+        )
+    except Exception as exc:
+        publication = result.get("publication") or {}
+        if publication.get("published") and (
+            publication.get("formal_files_state") == "published"
+        ):
+            publication["finalization_status"] = "failed"
+            publication["recovery_required"] = True
+            publication["finalization_error"] = f"{type(exc).__name__}: {exc}"
+            _exit_for_publication(publication)
+        raise
 
 
 def main() -> None:
@@ -1935,6 +2225,11 @@ def main() -> None:
         help="只输出巡检结果，不写入 models YAML",
     )
     parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="任一语义 section 被隔离时不发布（退出码 2）",
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="忽略本地缓存和冷启动检查点，强制重新调用 API",
@@ -1977,6 +2272,7 @@ def main() -> None:
             request_timeout=args.request_timeout,
             no_cache=args.no_cache,
             dry_run=args.dry_run,
+            require_complete=args.require_complete,
             write_scope="all",
             show_progress=not args.quiet,
             update_catalog=True,
@@ -1999,6 +2295,7 @@ def main() -> None:
             request_timeout=args.request_timeout,
             no_cache=args.no_cache,
             dry_run=args.dry_run,
+            require_complete=args.require_complete,
             write_scope="all",
             update_catalog=True,
             replace_existing_models=True,
@@ -2010,11 +2307,7 @@ def main() -> None:
         if args.output
         else model_metadata_result_path(args.project)
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2),
-        encoding=TEXT_ENCODING,
-    )
+    _write_result_report(output_path, result)
     print(f"结果已写入: {output_path}")
     if result.get("source") == "catalog":
         paths = (
@@ -2082,14 +2375,7 @@ def main() -> None:
             )
         )
         publication = result.get("publication") or {}
-        if not args.dry_run and publication.get("status") == "blocked":
-            error_count = len(
-                (publication.get("validation") or {}).get("errors") or []
-            )
-            raise SystemExit(
-                f"冷启动生成发布被阻断（{error_count} 个校验错误），"
-                "原有 catalog 与 models 未改动"
-            )
+        _exit_for_publication(publication)
         return
     if "catalog" in result:
         catalog = result.get("catalog") or {}
@@ -2126,6 +2412,9 @@ def main() -> None:
             **result
         )
     )
+    publication = result.get("publication") or {}
+    if publication:
+        _exit_for_publication(publication)
 
 
 if __name__ == "__main__":

@@ -1303,6 +1303,20 @@ def _canonical_v3_model(
     return candidate
 
 
+def canonical_v3_model(
+    metadata: dict[str, Any],
+    decision: SectionDecision,
+    *,
+    operational_layer: str,
+) -> dict[str, Any]:
+    """Render one governed v3 model from an effective section decision."""
+    return _canonical_v3_model(
+        metadata,
+        decision,
+        operational_layer=operational_layer,
+    )
+
+
 def _metadata_with_effective_inspection(
     metadata: dict[str, Any],
     report: dict[str, Any] | None,
@@ -1323,6 +1337,8 @@ def _metadata_with_effective_inspection(
             value = payload.get(source_field)
             if value:
                 candidate[target_field] = copy.deepcopy(value)
+        if str(candidate.get("table_type") or "").casefold() == "dimension":
+            candidate["layer"] = "DIM"
     if decision.status("business_semantics") == "active":
         business_mapping = {
             "business_process": "business_process",

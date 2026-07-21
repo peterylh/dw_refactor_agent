@@ -1117,7 +1117,24 @@ def _summarize_project(
         "warning_count": status_counts["warning"],
         "metadata_warning_count": status_counts["metadata_warning"],
         "publication_status": str(publication.get("status") or "unknown"),
+        "candidate_status": str(
+            publication.get("candidate_status") or "unknown"
+        ),
+        "complete": bool(publication.get("complete")),
         "published": bool(publication.get("published")),
+        "would_publish_status": str(
+            publication.get("would_publish_status") or ""
+        ),
+        "formal_files_state": str(
+            publication.get("formal_files_state") or "unknown"
+        ),
+        "finalization_status": str(
+            publication.get("finalization_status") or "unknown"
+        ),
+        "recovery_required": bool(publication.get("recovery_required")),
+        "withheld_section_count": int(
+            publication.get("withheld_section_count") or 0
+        ),
         "publication_error_count": int(
             publication_validation.get("error_count") or 0
         ),
@@ -1200,6 +1217,7 @@ def run_benchmark(
     request_timeout: int = DEFAULT_REQUEST_TIMEOUT,
     no_cache: bool = False,
     dry_run: bool = False,
+    require_complete: bool = False,
     output_path: Optional[Path] = None,
     asset_dir: Optional[Path] = None,
     cleanup: bool = False,
@@ -1252,6 +1270,7 @@ def run_benchmark(
                 request_timeout=request_timeout,
                 no_cache=no_cache,
                 dry_run=dry_run,
+                require_complete=require_complete,
                 update_catalog=True,
                 replace_existing_models=True,
                 show_progress=show_progress,
@@ -1283,6 +1302,7 @@ def run_benchmark(
         "parallelism": parallelism,
         "request_timeout": request_timeout,
         "dry_run": dry_run,
+        "require_complete": require_complete,
         "tmp_root": str(tmp_root),
         "total_table_count": total_tables,
         "total_middle_table_count": total_middle,
@@ -1311,6 +1331,20 @@ def run_benchmark(
         ),
         "blocked_project_count": sum(
             1 for item in summaries if item["publication_status"] == "blocked"
+        ),
+        "incomplete_project_count": sum(
+            1
+            for item in summaries
+            if item["candidate_status"] == "quarantined"
+        ),
+        "inspection_failure_project_count": sum(
+            1
+            for item in summaries
+            if "not_published_inspection_failure"
+            in {
+                item["publication_status"],
+                item["would_publish_status"],
+            }
         ),
         "projects": summaries,
     }
@@ -1378,6 +1412,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Preview model/catalog updates without writing generated YAML.",
     )
     parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="Reject publication when any model section is quarantined.",
+    )
+    parser.add_argument(
         "--show-progress",
         action="store_true",
         help="Print table_inspector progress events.",
@@ -1424,6 +1463,7 @@ def main(argv: Optional[List[str]] = None) -> Dict[str, Any]:
         request_timeout=args.request_timeout,
         no_cache=args.no_cache,
         dry_run=args.dry_run,
+        require_complete=args.require_complete,
         output_path=Path(args.output) if args.output else None,
         asset_dir=Path(args.asset_dir) if args.asset_dir else None,
         cleanup=args.cleanup,

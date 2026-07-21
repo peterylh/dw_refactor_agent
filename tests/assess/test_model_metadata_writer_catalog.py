@@ -26,6 +26,7 @@ from tests.assess.model_metadata_writer_test_support import (
     _customer_subject,
     _order_detail_process,
     _setup_catalog_discovery_model,
+    _structured_inspection_result,
     _write_catalog_project,
     _write_split_catalog,
 )
@@ -74,7 +75,7 @@ def _install_generate_catalog_fake_inspector(
             for ctx in contexts:
                 result = result_factory(ctx)
                 if result is not None:
-                    results.append(result)
+                    results.append(_structured_inspection_result(result))
             return results
 
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
@@ -202,22 +203,35 @@ def test_run_generate_model_metadata_only_proposes_new_catalog_codes(
     assert result["catalog_change_count"] == 0
     assert result["catalog_update"] is None
     assert result["catalog_proposal_count"] == 2
-    assert result["publication"]["status"] == "blocked"
-    assert result["publication"]["published"] is False
+    assert result["publication"]["status"] == (
+        "dry_run" if dry_run else "published_with_quarantine"
+    )
+    assert result["publication"]["published"] is (not dry_run)
+    assert result["publication"]["candidate_status"] == "quarantined"
     assert result["publication"]["validation"]["stage"] == (
-        "quarantine_publication_gate"
+        "effective_candidate"
     )
     assert result["candidate_resolution"]["status"] == "quarantined"
     assert result["candidate_resolution"]["quarantined_table_count"] == 2
+    candidate_models = result["candidate_models"]
+    if not dry_run:
+        candidate_models = {
+            path.stem: yaml.safe_load(path.read_text(encoding="utf-8"))
+            for path in (project_dir / "mid" / "models").glob("*.yaml")
+        }
     assert all(
         set(model["governance"]["withheld_sections"])
         == set(config.MODEL_SECTIONS)
-        for model in result["candidate_models"].values()
+        for model in candidate_models.values()
     )
     assert catalog["business_processes"] == []
     assert catalog["semantic_subjects"] == []
-    assert not (project_dir / "mid/models/dwd_order_detail.yaml").exists()
-    assert not (project_dir / "mid/models/dim_customer.yaml").exists()
+    assert (project_dir / "mid/models/dwd_order_detail.yaml").exists() is (
+        not dry_run
+    )
+    assert (project_dir / "mid/models/dim_customer.yaml").exists() is (
+        not dry_run
+    )
     if not dry_run:
         checkpoint_manifest = yaml.safe_load(
             (project_dir / "mid_checkpoints/manifest.json").read_text(
@@ -670,7 +684,7 @@ def test_generate_single_writer_preserves_base_contract_when_llm_blocked(
             pass
 
         def inspect_batch(self, contexts):
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -682,6 +696,7 @@ def test_generate_single_writer_preserves_base_contract_when_llm_blocked(
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module,
@@ -734,7 +749,7 @@ def test_generate_single_writer_pass_keeps_ods_ads_base_models(
 
         def inspect_batch(self, contexts):
             seen_contexts.extend(contexts)
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -757,6 +772,7 @@ def test_generate_single_writer_pass_keeps_ods_ads_base_models(
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module,
@@ -817,7 +833,7 @@ def test_generate_single_writer_pass_deletes_then_writes_final_models(
             pass
 
         def inspect_batch(self, contexts):
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -836,6 +852,7 @@ def test_generate_single_writer_pass_deletes_then_writes_final_models(
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module,
@@ -886,7 +903,7 @@ def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refi
             pass
 
         def inspect_batch(self, contexts):
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -909,6 +926,7 @@ def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refi
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module,
@@ -1206,7 +1224,7 @@ def test_run_metadata_write_report_uses_plan_prior(
                             reasoning_steps=[],
                         )
                     )
-            return results
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module, "load_lineage_data", lambda project: sample_lineage_data
@@ -1236,7 +1254,7 @@ def test_run_metadata_write_report_uses_plan_prior(
     )
 
 
-def test_run_metadata_write_discovers_related_entity_from_dws_grain(
+def test_refresh_does_not_publish_unconfirmed_related_entity_from_dws_grain(
     monkeypatch, tmp_path, isolated_writer_project
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -1363,38 +1381,29 @@ def test_run_metadata_write_discovers_related_entity_from_dws_grain(
                             },
                         )
                     )
-            return results
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module, "load_lineage_data", lambda project: lineage_data
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    run_metadata_write(
+    result = run_metadata_write(
         isolated_writer_project, api_key="test", write_scope="grain"
     )
 
     saved = yaml.safe_load(
         (models_dir / "dwd_product.yaml").read_text(encoding="utf-8")
     )
-
-    assert saved["entities"] == [
-        {
-            "code": "PROD",
-            "type": "primary",
-            "key_columns": ["product_id"],
-        },
-        {
-            "code": "CAT",
-            "type": "foreign",
-            "name": "品类",
-            "key_columns": ["category_id"],
-            "relationship": {
-                "type": "many_to_one",
-                "from_entity": "PROD",
-            },
-        },
-    ]
+    transitions = result["publication"]["refresh_transition"]["transitions"]
+    entity_transition = next(
+        item
+        for item in transitions
+        if item["table"] == "dwd_product" and item["section"] == "entities"
+    )
+    assert result["publication"]["status"] == "published"
+    assert entity_transition["action"] == "retain_existing_active"
+    assert "entities" not in saved
 
 
 def test_run_catalog_discovery_writes_catalog_from_llm_results(

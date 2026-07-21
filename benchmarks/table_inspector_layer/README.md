@@ -30,6 +30,11 @@ PYTHONPATH=src python3 benchmarks/table_inspector_layer/run.py \
   --output /tmp/generate_llm_cold_start_benchmark.json
 ```
 
+Add `--require-complete` to exercise the strict publication gate. A benchmark
+with semantic quarantine then performs no formal write and exits through the
+library report as `not_published_incomplete`; without the flag, a healthy run
+may publish `published_with_quarantine`.
+
 From `make`:
 
 ```bash
@@ -85,11 +90,21 @@ Top-level report fields include:
 - `total_catalog_change_count`: process/subject catalog additions or updates.
 - `total_business_process_count` and `total_semantic_subject_count`: generated
   catalog entry counts.
+- `incomplete_project_count`: project candidates containing quarantined
+  sections, regardless of whether the default gate published them.
+- `inspection_failure_project_count`: projects rejected by the run-level
+  inspection breaker.
 
 Each project summary includes table counts, generated model counts, warning and
 blocked counts, LLM middle-layer accuracy, expected-layer breakdowns, confusion
 data, final layer distribution for sanity checking, metric/entity/grain counts,
 middle-layer mismatches, and `catalog_summary`.
+
+Publication fields include `candidate_status`, `complete`,
+`would_publish_status`, `formal_files_state`, `finalization_status`,
+`recovery_required`, and `withheld_section_count`. These distinguish semantic
+quarantine, strict rejection, hard block, breaker failure, and post-publication
+finalization failure without parsing CLI text.
 
 `catalog_summary` compares generated business process and semantic subject
 codes against the original source catalog, reporting expected codes, generated
@@ -113,3 +128,9 @@ Use `mismatches` as the combined review queue for middle-layer decisions;
 `first_attempt_mismatches` and `post_retry_mismatches` isolate each phase. The
 temporary project path in `tmp_root` contains the generated model YAML and split
 catalog files for manual inspection.
+
+Formal split catalogs are the frozen confirmed input. Newly inferred process or
+subject codes remain proposal audit data and must not appear in those files.
+For every v3 model, verify that fields belonging to
+`governance.withheld_sections` are absent rather than serialized as empty or
+copied from the source project.

@@ -19,6 +19,9 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspectResult,
 )
 from dw_refactor_agent.lineage.view import LineageView
+from tests.assess.model_metadata_writer_test_support import (
+    _structured_inspection_result,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -416,7 +419,7 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
                         grain=grain or {},
                     )
                 )
-            return results
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
     monkeypatch.setattr(
@@ -452,8 +455,11 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     assert report["total_catalog_proposal_count"] == 2
     assert report["total_business_process_count"] == 0
     assert report["total_semantic_subject_count"] == 0
-    assert report["published_project_count"] == 0
-    assert report["blocked_project_count"] == 1
+    assert report["published_project_count"] == 1
+    assert report["blocked_project_count"] == 0
+    assert report["incomplete_project_count"] == 1
+    assert report["inspection_failure_project_count"] == 0
+    assert report["require_complete"] is False
     assert set(seen_contexts) == {
         ("customer_profile", "DWD", False),
         ("order_detail", "DWD", False),
@@ -488,11 +494,14 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     assert project["entity_table_count"] == 0
     assert project["grain_table_count"] == 0
     assert project["candidate_resolution_status"] == "quarantined"
+    assert project["candidate_status"] == "quarantined"
+    assert project["complete"] is False
+    assert project["withheld_section_count"] > 0
     assert project["quarantined_model_count"] == 3
-    assert project["publication_status"] == "blocked"
-    assert project["published"] is False
-    assert project["publication_error_count"] > 0
-    assert project["publication_errors"]
+    assert project["publication_status"] == "published_with_quarantine"
+    assert project["published"] is True
+    assert project["publication_error_count"] == 0
+    assert project["publication_errors"] == []
     assert project["catalog_summary"]["business_process_overlap_count"] == 0
     assert project["catalog_summary"]["semantic_subject_overlap_count"] == 0
     assert (

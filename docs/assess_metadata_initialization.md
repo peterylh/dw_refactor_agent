@@ -98,6 +98,7 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate --dry-run
 python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate --llm --dry-run
 python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate --llm --require-complete
 ```
 
 `generate --dry-run` 不写 catalog、不写 model 文件、不删除旧 models；结果 JSON 会通过
@@ -106,12 +107,59 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 正式执行会先在内存中生成完整候选并运行发布校验。执行配置从 task SQL 确定性推导：
 对目标表执行 `TRUNCATE TABLE` 对应 `full/replace_all`，按 ETL 参数删除目标切片的任务对应
 `incremental`，并从目标表 DELETE 条件提取 `execution.slice`；存在 full-refresh
-伴随任务时使用 `companion`，否则使用 `replay_slices`。候选存在无法解析的执行契约、
-blocked LLM 巡检、无效实体引用或未闭合的业务语义引用时，`publication.status=blocked`，
-catalog 和正式 models 均保持不变。DWD/DWS 没有 task SQL、LLM 未覆盖全部 MID 候选、事实表业务过程缺失或有歧义、
-实体缺少有效键、grain 引用未知实体/字段也属于发布阻断项。generate 的巡检资产角色只从
-DDL/task 和内存候选构建，不扫描旧 model YAML；发布校验通过后，catalog 与 models 先全部暂存，再统一
-替换，普通文件写入异常会回滚整组文件。
+伴随任务时使用 `companion`，否则使用 `replay_slices`。
+
+LLM 结果先经过 typed recovery 和 section-aware decision。单表业务语义、实体/grain 或指标
+不完整时，只隔离受影响 section；默认仍发布完整的 v3 managed model set，状态为
+`published_with_quarantine`。正式 model 中被隔离 section 的字段会被删除，详细候选只保留在
+结果 JSON/checkpoint。例如未执行 LLM 的 MID model 只保留确定性字段：
+
+```yaml
+version: 3
+name: dwd_order_detail
+operational_layer: DWD
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+governance:
+  schema_version: 1
+  status: quarantined
+  withheld_sections:
+    - classification
+    - business_semantics
+    - entities
+    - grain
+    - metrics
+  reasons:
+    classification: [inspection_not_requested]
+    business_semantics: [inspection_not_requested]
+    entities: [inspection_not_requested]
+    grain: [inspection_not_requested]
+    metrics: [inspection_not_requested]
+```
+
+未确认的 business process/semantic subject 只写 proposal audit，不会进入三份正式 catalog；
+用户确认 catalog 后再次运行，相关 section 才可能激活。`--require-complete` 要求所有适用
+section 都 active；存在 quarantine 时返回 `not_published_incomplete` 且正式文件完全不变。
+
+无法解析的执行契约、未知 issue/schema、资产 manifest 变化等确定性错误仍返回 `blocked`；
+项目级 API/解析故障触发巡检 breaker，返回 `not_published_inspection_failure`。DWD/DWS 没有
+task SQL 等确定性合同错误也不会用 quarantine 掩盖。generate 的巡检资产角色只从 DDL/task
+和内存候选构建，不扫描旧 model YAML；confirmed catalog 与完整 models 文件集先全部暂存，
+再在项目 publication lock 下通过 journal 事务发布，普通异常会回滚整组文件。
+
+`publication` 的主要状态和 CLI 退出码如下：
+
+| 状态 | 正式写入 | 退出码 |
+| --- | --- | --- |
+| `published` / `published_with_quarantine` | 是 | 0 |
+| `blocked` | 否 | 1 |
+| `not_published_incomplete` / `not_published_inspection_failure` | 否 | 2 |
+| 正式文件已发布但 `finalization_status=failed` | 已发布 | 3 |
+
+`--dry-run` 的 `status` 固定为 `dry_run`，但 `candidate_status`、`complete` 和
+`would_publish_status` 仍反映真实 gate；因此 strict dry-run 发现 quarantine 时退出码也是 2，
+且不会写 catalog、models 或删除旧文件。
 
 非 dry-run 的 `generate --llm` 会为长时间运行自动创建逐表检查点：
 
@@ -134,8 +182,9 @@ CSV 每张成功表一行，只包含最终 `status=passed` 的 LLM 巡检结果
 
 检查点同时为每个实际 prompt 上下文保存完整巡检结果 sidecar 和内容哈希。下一次使用相同
 项目执行 `generate --llm` 时，会先校验上一轮 manifest、sidecar 内容哈希和当前 prompt
-上下文哈希；校验通过且状态不是 `blocked`、置信度达到当前阈值的结果直接恢复，不再调用
-LLM；因重试请求异常而临时回退到旧结果的单表结果不会进入恢复集。初检与注入上游指标后的
+上下文哈希；只有当前 cache/checkpoint policy 允许且无损的结果才能恢复，并且恢复后仍会
+重新执行当前 recovery、decision、proposal、依赖级联和 governance 合同，不能直接把旧的
+effective model 当作本轮正式候选。因重试请求异常而临时回退到旧结果的单表结果不会进入恢复集。初检与注入上游指标后的
 复检使用不同上下文哈希，可分别恢复；上一轮 `blocked`、缺失、损坏或输入已经变化的表会重新
 巡检。因此项目级发布失败后，保持输入不变重跑时只消耗失败表或失效上下文的 API 调用。
 如果结果在原始 LLM 返回后、generate 分层解析阶段才变为 `blocked`，manifest 会记录该上下文
@@ -168,7 +217,10 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 ```
 
 `refresh --llm` 固定刷新表信息、指标、entities/grain 等全部模型字段；不再从 CLI 暴露
-`--write-scope`。冷启动时也可以使用 `--mode generate --llm`，先生成基础 models，再补全 LLM 元数据。
+`--write-scope`。新的低质量结果不会删除已有且仍有效的 active section；已有 quarantine 只有
+在本轮结果被接受且 confirmed catalog/确定性合同闭合后才激活，并清理对应 reason。可使用
+`--require-complete` 拒绝仍含 quarantine 的 refresh 候选。冷启动时也可以使用
+`--mode generate --llm`，先生成基础 models，再补全 LLM 元数据。
 
 ## 常见问题
 

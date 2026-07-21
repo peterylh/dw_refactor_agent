@@ -2,6 +2,9 @@ import pytest
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.inspection_issues import (
+    ParsedInspectionCandidate,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
 from dw_refactor_agent.config import (
     BusinessAreaDef,
@@ -459,3 +462,16 @@ def _run_isolated_writer_helper(tmp_path_factory, monkeypatch, helper):
             helper.__name__.replace("_assert_", "")
         )
         helper(tmp_path, isolated_monkeypatch)
+
+
+def _structured_inspection_result(
+    result: TableInspectResult,
+) -> TableInspectResult:
+    """Mark a hand-built inspector result as a lossless parsed candidate."""
+    if result.parsed_candidate is None:
+        result.parsed_candidate = ParsedInspectionCandidate.create(
+            table_name=result.table_name,
+            raw_response_hash=f"fixture-{result.table_name}",
+            payload={"table_name": result.table_name},
+        )
+    return result

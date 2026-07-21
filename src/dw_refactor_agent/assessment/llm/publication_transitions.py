@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
 
 from dw_refactor_agent.assessment.llm.generation_candidate_resolver import (
     SectionDecision,
+    canonical_v3_model,
 )
 from dw_refactor_agent.assessment.llm.inspection_issues import (
     HARD_BLOCK_ISSUE_CODES,
@@ -17,8 +19,15 @@ from dw_refactor_agent.assessment.llm.inspection_issues import (
 from dw_refactor_agent.assessment.semantic_models import (
     AssessmentModelSemantics,
 )
-from dw_refactor_agent.config import MODEL_SECTIONS
-from dw_refactor_agent.config.model_governance import STRUCTURE_SECTIONS
+from dw_refactor_agent.config import (
+    MODEL_SECTION_FIELDS,
+    MODEL_SECTIONS,
+    UnavailableModelSection,
+)
+from dw_refactor_agent.config.model_governance import (
+    MODEL_SECTION_LEGACY_ALIAS_FIELDS,
+    STRUCTURE_SECTIONS,
+)
 from dw_refactor_agent.lineage.identifiers import (
     canonical_qualified_identifier,
     identifier_match_key,
@@ -443,6 +452,7 @@ class RefreshSectionTransition:
     effective_source: str
     action: str
     reason: str = ""
+    quarantine_reasons: tuple[str, ...] = ()
     clear_governance: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -455,6 +465,7 @@ class RefreshSectionTransition:
             "effective_source": self.effective_source,
             "action": self.action,
             "reason": self.reason,
+            "quarantine_reasons": list(self.quarantine_reasons),
             "clear_governance": self.clear_governance,
         }
 
@@ -481,6 +492,15 @@ def _candidate_issue_reason(decision: SectionDecision, section: str) -> str:
     ):
         return "retryable_inspection_failure"
     return "semantic_quarantine"
+
+
+def _candidate_quarantine_reasons(
+    decision: SectionDecision, section: str
+) -> tuple[str, ...]:
+    reasons = decision.reasons_for(section)
+    if reasons:
+        return reasons
+    return (_candidate_issue_reason(decision, section),)
 
 
 def plan_refresh_transitions(
@@ -660,6 +680,11 @@ def plan_refresh_transitions(
                             if retention_allowed
                             else "retention_fingerprint_changed"
                         ),
+                        quarantine_reasons=(
+                            _candidate_quarantine_reasons(decision, section)
+                            if not retention_allowed
+                            else ()
+                        ),
                     )
                 )
                 continue
@@ -686,6 +711,9 @@ def plan_refresh_transitions(
                         effective_source="candidate",
                         action="retain_candidate_quarantine",
                         reason=_candidate_issue_reason(decision, section),
+                        quarantine_reasons=_candidate_quarantine_reasons(
+                            decision, section
+                        ),
                     )
                 )
                 continue
@@ -748,6 +776,123 @@ def plan_refresh_transitions(
         status="blocked" if blocked else "ready",
         transitions=tuple(transitions),
     )
+
+
+def materialize_refresh_models(
+    existing_models: Mapping[str, Mapping[str, Any]],
+    candidate_models: Mapping[str, Mapping[str, Any]],
+    transition_plan: RefreshTransitionPlan,
+) -> dict[str, dict[str, Any]]:
+    """Build governed v3 models from a validated refresh transition plan."""
+    if transition_plan.status != "ready":
+        raise ValueError("blocked refresh transition cannot be materialized")
+    transitions_by_table: dict[str, list[RefreshSectionTransition]] = {}
+    for transition in transition_plan.transitions:
+        transitions_by_table.setdefault(
+            _identity_key(transition.table_name), []
+        ).append(transition)
+    semantic_fields = {
+        field
+        for section in MODEL_SECTIONS
+        for field in (
+            MODEL_SECTION_FIELDS[section]
+            + MODEL_SECTION_LEGACY_ALIAS_FIELDS[section]
+        )
+    }
+    materialized = {}
+    for table_name, raw_existing in sorted(
+        existing_models.items(), key=lambda item: _identity_key(item[0])
+    ):
+        candidate_name = _resolve_identity(table_name, candidate_models)
+        if not candidate_name:
+            raise ValueError(f"refresh candidate missing for {table_name}")
+        existing = dict(raw_existing)
+        candidate = dict(candidate_models[candidate_name])
+        existing_view = AssessmentModelSemantics.from_metadata(
+            existing, source=table_name
+        )
+        candidate_view = AssessmentModelSemantics.from_metadata(
+            candidate, source=candidate_name
+        )
+        table_transitions = transitions_by_table.get(
+            _identity_key(table_name), []
+        )
+        if {item.section for item in table_transitions} != set(MODEL_SECTIONS):
+            raise ValueError(
+                f"refresh transition set is incomplete for {table_name}"
+            )
+        merged = {
+            key: copy.deepcopy(value)
+            for key, value in candidate.items()
+            if key not in semantic_fields
+            and key not in {"version", "governance", "operational_layer"}
+        }
+        statuses = []
+        reasons = []
+        for transition in sorted(
+            table_transitions,
+            key=lambda item: MODEL_SECTIONS.index(item.section),
+        ):
+            section = transition.section
+            statuses.append((section, transition.effective_status))
+            if transition.effective_status == "quarantined":
+                existing_section = existing_view.section(section)
+                section_reasons = (
+                    transition.quarantine_reasons
+                    if transition.quarantine_reasons
+                    else (
+                        existing_section.reasons
+                        if isinstance(
+                            existing_section, UnavailableModelSection
+                        )
+                        else (
+                            (transition.reason,) if transition.reason else ()
+                        )
+                    )
+                )
+                if not section_reasons:
+                    raise ValueError(
+                        f"quarantined refresh section {table_name}.{section} "
+                        "has no governance reason"
+                    )
+                reasons.append((section, tuple(section_reasons)))
+            if transition.effective_status != "active":
+                continue
+            source_view = (
+                existing_view
+                if transition.effective_source == "existing"
+                else candidate_view
+            )
+            payload = source_view.active_payload(section)
+            if payload is None:
+                raise ValueError(
+                    f"active refresh section {table_name}.{section} "
+                    "has no effective payload"
+                )
+            merged.update(copy.deepcopy(payload))
+        decision = SectionDecision(
+            table_name=table_name,
+            statuses=tuple(statuses),
+            reasons=tuple(reasons),
+        )
+        operational_layer = existing_view.operational_layer
+        if not operational_layer:
+            raise ValueError(
+                f"refresh model {table_name} has no operational layer"
+            )
+        if int(existing.get("version") or 2) == 2 and not (
+            decision.quarantined_sections
+        ):
+            merged["version"] = 2
+            merged["name"] = str(existing.get("name") or table_name)
+            materialized[table_name] = merged
+        else:
+            materialized[table_name] = canonical_v3_model(
+                merged,
+                decision,
+                operational_layer=operational_layer,
+            )
+    return materialized
 
 
 def plan_no_llm_generation_decisions(

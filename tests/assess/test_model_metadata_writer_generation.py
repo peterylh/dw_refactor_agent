@@ -31,13 +31,14 @@ from tests.assess.model_metadata_writer_test_support import (
     _expected_pay_amt_1d_metric,
     _sample_dws_result,
     _sample_fact_result,
+    _structured_inspection_result,
     _write_catalog_project,
     _write_split_catalog,
 )
 
 
 def test_run_metadata_write_reuses_table_inspector(
-    monkeypatch, sample_lineage_data, isolated_writer_project
+    tmp_path, monkeypatch, sample_lineage_data, isolated_writer_project
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
@@ -56,12 +57,20 @@ def test_run_metadata_write_reuses_table_inspector(
             created_cache_files.append(cache_file)
 
         def inspect_batch(self, contexts):
-            if contexts and contexts[0].layer == "DWS":
-                seen_dws_contexts.extend(contexts)
+            seen_dws_contexts.extend(
+                context
+                for context in contexts
+                if context.layer == "DWS" and context.upstream_metric_groups
+            )
             results = []
             for ctx in contexts:
                 if ctx.table_name == "dwd_order_detail":
-                    results.append(_sample_fact_result())
+                    fact_result = _sample_fact_result()
+                    fact_result.business_process = "ORDER_DETAIL"
+                    fact_result.atomic_metrics[0]["business_process"] = (
+                        "ORDER_DETAIL"
+                    )
+                    results.append(fact_result)
                 elif ctx.table_name == "dws_store_sales_daily":
                     results.append(_sample_dws_result())
                 else:
@@ -75,10 +84,24 @@ def test_run_metadata_write_reuses_table_inspector(
                             reasoning_steps=[],
                         )
                     )
-            return results
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module, "load_lineage_data", lambda project: sample_lineage_data
+    )
+    _write_split_catalog(
+        tmp_path / isolated_writer_project,
+        isolated_writer_project,
+        _catalog_payload(
+            processes=[
+                {
+                    "code": "ORDER_DETAIL",
+                    "name": "订单明细",
+                    "data_domain": "04",
+                    "business_area": "SHOP",
+                }
+            ]
+        ),
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
     original_pipeline = writer_module.run_inspection_pipeline
@@ -152,6 +175,11 @@ def test_run_metadata_write_reuses_table_inspector(
     assert updates_by_table["dwd_customer"]["updated"] is False
     assert updates_by_table["dws_store_sales_daily"]["table"] == (
         "dws_store_sales_daily"
+    )
+    assert seen_dws_contexts, next(
+        decision
+        for decision in result["local_section_decisions"]
+        if decision["table"] == "dwd_order_detail"
     )
     assert seen_dws_contexts[0].upstream_metric_groups["dwd_order_detail"] == {
         "atomic_metrics": ["pay_amt"],
@@ -354,6 +382,7 @@ def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
 def test_model_metadata_writer_cli_fails_when_generate_publication_is_blocked(
     monkeypatch,
     tmp_path,
+    capsys,
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
@@ -395,7 +424,8 @@ def test_model_metadata_writer_cli_fails_when_generate_publication_is_blocked(
     with pytest.raises(SystemExit) as exc_info:
         writer_module.main()
 
-    assert "发布被阻断" in str(exc_info.value)
+    assert exc_info.value.code == 1
+    assert "发布状态: blocked" in capsys.readouterr().err
     output_path = (
         project_dir / "artifacts" / "assessment" / "model_metadata_result.json"
     )
@@ -553,7 +583,7 @@ def test_run_generate_model_metadata_dry_run_llm_uses_generated_model_baseline(
 
         def inspect_batch(self, contexts):
             seen_contexts.extend(contexts)
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -571,6 +601,7 @@ def test_run_generate_model_metadata_dry_run_llm_uses_generated_model_baseline(
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module, "load_lineage_data", lambda _: lineage_data
@@ -1582,10 +1613,36 @@ def test_generate_reports_checkpoint_finalization_failure_after_publish(
     def fail_finish(self, **kwargs):
         raise OSError("simulated final manifest failure")
 
+    inspected = _structured_inspection_result(
+        TableInspectResult(
+            table_name="dwd_first",
+            declared_layer="DWD",
+            inferred_layer="DWD",
+            table_type="fact",
+            confidence=0.9,
+            reasoning_steps=[],
+        )
+    )
+    inspected.business_process = "UNCONFIRMED"
+    _effective, local_decision = (
+        writer_module.prepare_inspection_for_propagation(
+            inspected,
+            metadata={
+                "name": "dwd_first",
+                "layer": "DWD",
+                "table_type": "fact",
+            },
+            catalog=_catalog_payload(),
+        )
+    )
     monkeypatch.setattr(
         writer_module,
         "run_metadata_write",
-        lambda *args, **kwargs: {"model_updates": [], "tables": []},
+        lambda *args, **kwargs: {
+            "model_updates": [],
+            "tables": [writer_module.inspect_result_to_dict(inspected)],
+            "local_section_decisions": [local_decision.to_dict()],
+        },
     )
     monkeypatch.setattr(
         writer_module,
@@ -1605,7 +1662,7 @@ def test_generate_reports_checkpoint_finalization_failure_after_publish(
         update_catalog=False,
     )
 
-    assert result["publication"]["status"] == "published"
+    assert result["publication"]["status"] == "published_with_quarantine"
     assert result["checkpoint"]["status"] == "finalization_failed"
     assert "simulated final manifest failure" in result["checkpoint"]["error"]
     assert (project_dir / "mid" / "models" / "dwd_first.yaml").exists()
@@ -1639,8 +1696,15 @@ def test_run_generate_model_metadata_missing_catalog_writes_skeleton_and_models(
     model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
     model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
     assert result["model_update_count"] == 1
+    assert result["publication"]["status"] == "published_with_quarantine"
     assert model["name"] == "dwd_order_detail"
-    assert model["layer"] == "DWD"
+    assert model["version"] == 3
+    assert model["operational_layer"] == "DWD"
+    assert "layer" not in model
+    assert "table_type" not in model
+    assert set(model["governance"]["withheld_sections"]) == set(
+        config.MODEL_SECTIONS
+    )
     assert model["execution"] == {
         "materialized": "full",
         "full_refresh_strategy": "replace_all",
@@ -1715,7 +1779,7 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
         for path in (project_dir / "mid" / "models").glob("*.yaml")
     }
 
-    assert result["publication"]["status"] == "published"
+    assert result["publication"]["status"] == "published_with_quarantine"
     assert models["dwd_full"]["execution"] == {
         "materialized": "full",
         "full_refresh_strategy": "replace_all",

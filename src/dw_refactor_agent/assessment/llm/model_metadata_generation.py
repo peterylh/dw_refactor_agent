@@ -496,6 +496,8 @@ def _generate_model_update_payload(
     write_scope: str,
     source: str = "direct_generation",
 ) -> dict[str, Any]:
+    previous_layer = previous.get("operational_layer") or previous.get("layer")
+    updated_layer = updated.get("operational_layer") or updated.get("layer")
     business_changed = any(
         updated.get(key) != previous.get(key)
         for key in (
@@ -515,7 +517,7 @@ def _generate_model_update_payload(
         "changed": changed,
         "metadata_changed": any(
             updated.get(key) != previous.get(key)
-            for key in ("layer", "table_type")
+            for key in ("layer", "operational_layer", "table_type")
         ),
         "business_changed": business_changed,
         "metric_changed": False,
@@ -523,8 +525,8 @@ def _generate_model_update_payload(
         "updated": bool(changed and not dry_run),
         "write_scope": write_scope,
         "source": source,
-        "previous_layer": previous.get("layer"),
-        "layer": updated.get("layer"),
+        "previous_layer": previous_layer,
+        "layer": updated_layer,
         "previous_table_type": previous.get("table_type"),
         "table_type": updated.get("table_type"),
         "previous_data_domain": previous.get("data_domain"),

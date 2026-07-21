@@ -202,6 +202,17 @@ def test_refresh_activates_requested_quarantine_and_preserves_unrequested():
     ) == ("activate_candidate", True, "preserve_unrequested")
 
 
+def test_refresh_transition_preserves_detailed_quarantine_reasons():
+    decision = _decision(quarantined={"metrics"})
+    plan = plan_refresh_transitions(
+        {"fact": _quarantined_model()},
+        candidate_decisions=[decision],
+        retention_eligible={"fact": STRUCTURE_SECTIONS},
+    )
+    metrics = _transitions_by_section(plan)["metrics"]
+    assert metrics.quarantine_reasons == ("metrics_incomplete",)
+
+
 def test_refresh_without_llm_preserves_governance_but_not_stale_active():
     plan = plan_refresh_transitions(
         {"fact": _quarantined_model()},
