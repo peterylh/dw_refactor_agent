@@ -844,6 +844,17 @@ def _validate_contract_graph(contract: TaskTemplateContract) -> None:
                 code="template.contract.invalid_dynamic_relation",
                 path=("usage", "dynamic_relations", item.prop),
             )
+    identifier_types = {
+        ParameterType.IDENTIFIER,
+        ParameterType.QUALIFIED_IDENTIFIER,
+    }
+    for prop in contract.sensitive_props:
+        if parameters[prop].data_type in identifier_types:
+            raise ContractValidationError(
+                f"sensitive parameter {prop!r} cannot be an identifier",
+                code="template.contract.sensitive_identifier",
+                path=(prop, "sensitive"),
+            )
 
     state: Dict[str, str] = {}
 

@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from datetime import date
 
 import pytest
 
@@ -19,6 +20,9 @@ from dw_refactor_agent.refactor.plan_artifact import (
     write_verification_plan,
 )
 from dw_refactor_agent.refactor.session import write_manifest
+from dw_refactor_agent.refactor.verification_bindings import (
+    build_task_rendering_context,
+)
 from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 
 
@@ -131,6 +135,9 @@ def _write_compare_plan(plan_path, verification):
         "baseline_ddl": {},
         "ddl_changes": [],
         "jobs_to_run": [],
+        "task_rendering": build_task_rendering_context(
+            reference_date=date(2024, 12, 31)
+        ),
         "execution_graph": {
             "format_version": 1,
             "project": "shop",

@@ -13,6 +13,9 @@ from dw_refactor_agent.refactor.shadow_manifest import (
     manifest_summary,
 )
 from dw_refactor_agent.refactor.shadow_rewrite import rewrite_shadow_sql
+from dw_refactor_agent.refactor.verification_bindings import (
+    freeze_job_invocations,
+)
 
 
 class FakePlanner:
@@ -76,6 +79,16 @@ def _plan(tmp_path, *, baseline_ddl, ddl_changes, jobs):
     }
 
 
+def _compile(plan, root: Path, planner: FakePlanner):
+    for job in plan.get("jobs_to_run") or []:
+        job["verification_invocations"] = freeze_job_invocations(
+            job,
+            planner=planner,
+            root=root,
+        )
+    return compile_shadow_manifest(plan, root, planner)
+
+
 def test_reserved_execution_marker_reference_is_blocked(tmp_path):
     task = _write_task(
         tmp_path,
@@ -95,7 +108,7 @@ def test_reserved_execution_marker_reference_is_blocked(tmp_path):
             }
         ],
     )
-    manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
+    manifest = _compile(plan, tmp_path, FakePlanner({}))
 
     assert isinstance(manifest, CompiledShadowManifest)
     assert isinstance(manifest.relations["daily_report"], ShadowRelation)
@@ -132,7 +145,7 @@ def test_schema_only_read_of_renamed_table_uses_qa_without_prefill(tmp_path):
         jobs=[{"job": "tmp_x", "target": "tmp_x", "file": task}],
     )
 
-    manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
+    manifest = _compile(plan, tmp_path, FakePlanner({}))
     context = manifest["jobs"]["tmp_x"]["context"]
 
     assert (
@@ -200,7 +213,7 @@ PARTITION BY RANGE(stat_date) (
         }
     )
 
-    manifest = compile_shadow_manifest(plan, tmp_path, planner)
+    manifest = _compile(plan, tmp_path, planner)
     action = manifest["prefill_actions"][0]
 
     assert action.mode is PrefillMode.PARTITIONS
@@ -227,7 +240,7 @@ def test_created_helper_is_qa_local_but_not_published_as_business_output(
         jobs=[{"job": "sales", "target": "sales", "file": task}],
     )
 
-    manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
+    manifest = _compile(plan, tmp_path, FakePlanner({}))
     job = manifest["jobs"]["sales"]
     rewritten = rewrite_shadow_sql(sql, job["context"])
 
@@ -279,12 +292,8 @@ PARTITION BY RANGE(stat_date) (
         ],
     )
 
-    conditional = compile_shadow_manifest(
-        conditional_plan, tmp_path, FakePlanner({})
-    )
-    truncate = compile_shadow_manifest(
-        truncate_plan, tmp_path, FakePlanner({})
-    )
+    conditional = _compile(conditional_plan, tmp_path, FakePlanner({}))
+    truncate = _compile(truncate_plan, tmp_path, FakePlanner({}))
 
     assert conditional["prefill_actions"][0].mode is PrefillMode.PARTITIONS
     assert conditional["prefill_actions"][0].partitions == ("p202501",)
@@ -354,7 +363,7 @@ PARTITION BY RANGE(stat_date) (
         }
     )
 
-    manifest = compile_shadow_manifest(plan, tmp_path, planner)
+    manifest = _compile(plan, tmp_path, planner)
 
     assert manifest["prefill_actions"] == []
     assert manifest["jobs"]["report"]["required_qa_tables"] == {"sales"}
@@ -373,7 +382,7 @@ def test_unresolved_relation_role_is_a_compile_blocker(tmp_path):
         jobs=[{"job": "sales", "target": "sales", "file": task}],
     )
 
-    manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
+    manifest = _compile(plan, tmp_path, FakePlanner({}))
 
     assert len(manifest["blockers"]) == 1
     assert "unresolved relation roles: sales" in manifest["blockers"][0]
@@ -398,7 +407,7 @@ def test_reading_a_phase2_dropped_table_is_blocked(tmp_path):
         jobs=[{"job": "report", "target": "report", "file": task}],
     )
 
-    manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
+    manifest = _compile(plan, tmp_path, FakePlanner({}))
 
     assert manifest["prefill_actions"] == []
     assert len(manifest["blockers"]) == 1
@@ -418,7 +427,7 @@ def test_external_same_name_source_is_not_selected_or_prefilled(tmp_path):
         jobs=[{"job": "report", "target": "report", "file": task}],
     )
 
-    manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
+    manifest = _compile(plan, tmp_path, FakePlanner({}))
     context = manifest["jobs"]["report"]["context"]
 
     assert manifest["prefill_actions"] == []
@@ -453,7 +462,7 @@ PARTITION BY RANGE(stat_date) (
         jobs=[{"job": "report", "target": "report", "file": task}],
     )
 
-    manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
+    manifest = _compile(plan, tmp_path, FakePlanner({}))
     action = manifest["prefill_actions"][0]
 
     assert action.current_table == "sales"
@@ -502,7 +511,7 @@ def test_prefill_does_not_satisfy_downstream_producer_readiness(tmp_path):
         }
     )
 
-    manifest = compile_shadow_manifest(plan, tmp_path, planner)
+    manifest = _compile(plan, tmp_path, planner)
 
     assert manifest["prefilled_tables"] == {"sales"}
     assert manifest["jobs"]["report"]["required_qa_tables"] == {"sales"}

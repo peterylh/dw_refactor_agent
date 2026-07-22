@@ -235,6 +235,7 @@ def render_task_execution_sql(
     session_params: Mapping[str, object],
     project_config: Mapping[str, object],
     environment: str,
+    mode: object = RenderMode.EXECUTION,
 ) -> ExecutionTaskSql:
     """Render one invocation from scheduler roots and environment bindings."""
     if not asset.is_template:
@@ -294,7 +295,7 @@ def render_task_execution_sql(
         )
     rendered = render_task(
         definition,
-        mode=RenderMode.EXECUTION,
+        mode=mode,
         bindings=RenderBindings(
             startup=startup,
             project=project,

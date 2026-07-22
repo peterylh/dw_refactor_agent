@@ -25,6 +25,10 @@ from dw_refactor_agent.refactor.artifact_contract import (
 )
 from dw_refactor_agent.refactor.qa_pool import validate_qa_identifier
 from dw_refactor_agent.refactor.session import load_manifest
+from dw_refactor_agent.refactor.verification_bindings import (
+    validate_frozen_invocation_summary,
+    validate_task_rendering_context,
+)
 from dw_refactor_agent.refactor.verification_checks import (
     validate_verification_checks,
 )
@@ -371,8 +375,23 @@ def _validate_persisted_plan_schema(plan: dict) -> None:
             raise ArtifactFormatError(
                 f"verification plan {field} must be a list"
             )
+    validate_task_rendering_context(plan.get("task_rendering"))
     jobs_by_key = _plan_jobs_by_key(plan["jobs_to_run"])
     _validate_execution_graph(plan, jobs_by_key)
+    for job in plan["jobs_to_run"]:
+        job_name = str(job.get("job") or "")
+        invocations = job.get("verification_invocations")
+        if not isinstance(invocations, list) or not invocations:
+            raise ArtifactFormatError(
+                f"[{job_name}] verification_invocations must be a "
+                "non-empty list; run analyze again"
+            )
+        for index, invocation in enumerate(invocations):
+            validate_frozen_invocation_summary(
+                invocation,
+                job_name=job_name,
+                index=index,
+            )
     verification = plan.get("verification")
     if not isinstance(verification, dict):
         raise ArtifactFormatError(

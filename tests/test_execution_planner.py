@@ -196,14 +196,18 @@ def _write_template_task(
                 "prop": "run_table",
                 "direct": "IN",
                 "type": "IDENTIFIER",
-                "value": {
-                    "derive": {
-                        "from": startup_prop,
-                        "operation": "format_date",
-                        "format": "yyyyMMdd",
-                        "prefix": "tmp_orders_",
+                "value": (
+                    "tmp_orders_safe"
+                    if startup_sensitive
+                    else {
+                        "derive": {
+                            "from": startup_prop,
+                            "operation": "format_date",
+                            "format": "yyyyMMdd",
+                            "prefix": "tmp_orders_",
+                        }
                     }
-                },
+                ),
             },
         ],
         "usage": {

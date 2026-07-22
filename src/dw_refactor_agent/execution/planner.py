@@ -25,7 +25,7 @@ from dw_refactor_agent.sql.task_execution import (
     load_execution_task_asset,
     render_task_execution_sql,
 )
-from dw_refactor_agent.sql.task_template import TaskTemplateError
+from dw_refactor_agent.sql.task_template import RenderMode, TaskTemplateError
 
 
 @dataclass(frozen=True)
@@ -66,9 +66,13 @@ class ExecutionPlanner:
         project_root: Path | None = None,
         *,
         db_env: str = "prod",
+        render_mode: object = RenderMode.EXECUTION,
+        current_date: date | None = None,
     ):
         self.project = project
         self.db_env = str(db_env)
+        self.render_mode = RenderMode.parse(render_mode)
+        self.current_date = current_date
         self._has_explicit_project_root = project_root is not None
         self.project_root = Path(project_root or config.core.PROJECT_ROOT)
         self.project_config = self._project_config()
@@ -285,6 +289,7 @@ class ExecutionPlanner:
                 session_params=params,
                 project_config=self.project_config,
                 environment=self.db_env,
+                mode=self.render_mode,
             )
         except TaskTemplateError as exc:
             raise ExecutionConfigError(
@@ -367,12 +372,13 @@ class ExecutionPlanner:
     ) -> None:
         if spec.historical_replay_supported:
             return
-        current_date = date.today().isoformat()
-        unsupported = [value for value in values if value != current_date]
+        current_date = self.current_date or date.today()
+        current_date_text = current_date.isoformat()
+        unsupported = [value for value in values if value != current_date_text]
         if unsupported:
             raise ExecutionConfigError(
                 f"[{spec.job_name}] current-state capture does not support "
-                f"historical replay; expected {current_date}, got "
+                f"historical replay; expected {current_date_text}, got "
                 f"{', '.join(unsupported)}"
             )
 

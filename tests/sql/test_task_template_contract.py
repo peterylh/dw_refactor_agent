@@ -270,6 +270,24 @@ def test_dynamic_relation_usage_requires_identifier_type():
     assert raised.value.code == "template.contract.invalid_dynamic_relation"
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda raw: raw["project_params"][0].update({"sensitive": True}),
+        lambda raw: raw["startup_params"][0].update({"sensitive": True}),
+    ],
+)
+def test_contract_rejects_direct_or_derived_sensitive_identifiers(mutate):
+    raw = deepcopy(_valid_contract())
+    mutate(raw)
+
+    with pytest.raises(ContractValidationError) as raised:
+        parse_contract(raw)
+
+    assert raised.value.code == "template.contract.sensitive_identifier"
+    assert raised.value.path[-1] == "sensitive"
+
+
 def test_sql_scanner_respects_backslash_escaped_double_quotes():
     sql = (
         'SELECT "prefix\\" ${biz_date}" FROM ${cdm_schema}.target; '

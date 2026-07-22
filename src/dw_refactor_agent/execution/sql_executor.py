@@ -22,6 +22,14 @@ class SqlExecutionError(RuntimeError):
     """Raised when a planned SQL invocation fails."""
 
 
+def terminate_batch_sql_item(sql_text: str) -> str:
+    """Give one invocation an explicit boundary inside a SQL batch."""
+    sql = sql_text.rstrip()
+    if sql and not sql.endswith(";"):
+        sql = f"{sql}\n;"
+    return sql
+
+
 class DirectSqlExecutor:
     """Execute planned invocations against a configured database."""
 
@@ -92,12 +100,10 @@ class ShadowSqlExecutor:
         self.run_sql_text(self.render(invocation), self.qa_db, qa=True)
 
     def execute_batch(self, invocations: list[TaskInvocation]) -> None:
-        rendered_sql = []
-        for invocation in invocations:
-            sql = self.render(invocation).rstrip()
-            if sql and not sql.endswith(";"):
-                sql = f"{sql};"
-            rendered_sql.append(sql)
+        rendered_sql = [
+            terminate_batch_sql_item(self.render(invocation))
+            for invocation in invocations
+        ]
         full_sql = "\n".join(rendered_sql)
         if full_sql.strip():
             self.run_sql_text(full_sql, self.qa_db, qa=True)

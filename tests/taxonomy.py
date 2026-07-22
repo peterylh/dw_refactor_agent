@@ -90,6 +90,7 @@ TEST_TYPE_BY_FILE = {
     "tests/refact/test_shadow_rewrite.py": "unit",
     "tests/refact/test_shadow_run.py": "scenario",
     "tests/refact/test_shadow_scope.py": "unit",
+    "tests/refact/test_verification_bindings.py": "scenario",
     "tests/refact/test_verification_plan.py": "contract",
     "tests/refact/test_workspace_snapshot.py": "unit",
     "tests/sql/test_task_template_contract.py": "contract",
