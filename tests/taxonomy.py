@@ -91,6 +91,8 @@ TEST_TYPE_BY_FILE = {
     "tests/refact/test_shadow_scope.py": "unit",
     "tests/refact/test_verification_plan.py": "contract",
     "tests/refact/test_workspace_snapshot.py": "unit",
+    "tests/sql/test_task_template_contract.py": "contract",
+    "tests/sql/test_task_template_renderer.py": "unit",
     "tests/test_check_duplicates.py": "unit",
     "tests/test_doris_ddl_validity.py": "guard",
     "tests/test_execution_planner.py": "unit",
