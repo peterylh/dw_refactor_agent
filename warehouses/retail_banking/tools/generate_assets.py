@@ -493,22 +493,42 @@ def _render_ddl(
     columns: list[dict],
     registry: IdentityRegistry,
     description: str,
+    partition_column: Optional[str] = None,
 ) -> str:
     if not columns:
         raise ValueError(f"Cannot render table without columns: {table_name}")
-    key_columns = _key_columns(columns)
-    key_column_set = set(key_columns)
     columns_by_name = {column["name"]: column for column in columns}
+    if partition_column and partition_column not in columns_by_name:
+        raise ValueError(
+            f"Partition column {partition_column} is missing from {table_name}"
+        )
+    key_columns = _key_columns(columns)
+    if partition_column and partition_column not in key_columns:
+        # Doris requires partition columns to be part of the key columns. For
+        # DUPLICATE KEY tables this only extends the physical sort key; it does
+        # not change row deduplication semantics.
+        key_columns.append(partition_column)
+    key_column_set = set(key_columns)
     ordered_columns = [columns_by_name[name] for name in key_columns]
     ordered_columns.extend(
         column for column in columns if column["name"] not in key_column_set
     )
-    lines = [
-        f"-- {description}",
-        f"DROP TABLE IF EXISTS {DATABASE}.{table_name};",
-        f"-- table_id: {registry.table_id(table_name)}",
-        f"CREATE TABLE IF NOT EXISTS {DATABASE}.{table_name} (",
-    ]
+    lines = []
+    if partition_column and columns_by_name[partition_column].get(
+        "nullable", True
+    ):
+        # AUTO RANGE rejects nullable dates. AUTO LIST preserves the reviewed
+        # undated-row contract, provided nullable partition columns are enabled
+        # in the same session that creates the table.
+        lines.extend(["SET allow_partition_column_nullable = true;", ""])
+    lines.extend(
+        [
+            f"-- {description}",
+            f"DROP TABLE IF EXISTS {DATABASE}.{table_name};",
+            f"-- table_id: {registry.table_id(table_name)}",
+            f"CREATE TABLE IF NOT EXISTS {DATABASE}.{table_name} (",
+        ]
+    )
     rendered_columns = []
     for column in ordered_columns:
         name = column["name"]
@@ -530,10 +550,14 @@ def _render_ddl(
             rendered_columns[index] += ","
     lines.extend(rendered_columns)
     quoted_keys = ", ".join(f"`{name}`" for name in key_columns)
+    lines.extend([") ENGINE=OLAP", f"DUPLICATE KEY({quoted_keys})"])
+    if partition_column:
+        # Each execution slice is one exact business date. AUTO LIST creates
+        # that physical partition on demand, including for arbitrary replay
+        # dates outside the fixture/bootstrap window.
+        lines.append(f"AUTO PARTITION BY LIST (`{partition_column}`) ()")
     lines.extend(
         [
-            ") ENGINE=OLAP",
-            f"DUPLICATE KEY({quoted_keys})",
             f"DISTRIBUTED BY HASH(`{key_columns[0]}`) BUCKETS 1",
             'PROPERTIES ("replication_num" = "1");',
             "",
@@ -1451,6 +1475,19 @@ def generate_reviewed_mid(
         ddl_columns = _with_technical_column(
             ddl_business_columns, name="etl_time", source_type="DATETIME"
         )
+        model = _model(
+            mapping=mapping,
+            table_name=target,
+            layer=layer,
+            columns=columns,
+            semantic_spec=semantic_spec,
+        )
+        execution = model["execution"]
+        partition_column = (
+            execution["slice"]["column"]
+            if execution["materialized"] == "incremental"
+            else None
+        )
         _write(
             ddl_root / f"{target}.sql",
             _render_ddl(
@@ -1458,14 +1495,8 @@ def generate_reviewed_mid(
                 columns=ddl_columns,
                 registry=registry,
                 description=f"{layer} generated from {mapping['source_table']}",
+                partition_column=partition_column,
             ),
-        )
-        model = _model(
-            mapping=mapping,
-            table_name=target,
-            layer=layer,
-            columns=columns,
-            semantic_spec=semantic_spec,
         )
         _write_yaml(model_root / f"{target}.yaml", model)
         task_sql = (
@@ -1577,6 +1608,7 @@ def generate_reviewed_mid(
                     description=(
                         f"DWD account snapshot generated from {mapping['source_table']}"
                     ),
+                    partition_column="snapshot_date",
                 ),
             )
             _write_yaml(
@@ -1967,6 +1999,9 @@ def generate_summaries(
                 columns=columns,
                 registry=registry,
                 description=f"Reviewed aggregate from {', '.join(source_names)}",
+                partition_column=(
+                    date_output if supports_daily_slice else None
+                ),
             ),
         )
         model = {
@@ -2346,6 +2381,11 @@ def generate_ads(
                 columns=ads_columns,
                 registry=registry,
                 description=f"Reviewed application metrics derived from {dws_name}",
+                partition_column=(
+                    str(spec["business_date"]["column"])
+                    if supports_daily_slice
+                    else None
+                ),
             ),
         )
         derived_metrics = [

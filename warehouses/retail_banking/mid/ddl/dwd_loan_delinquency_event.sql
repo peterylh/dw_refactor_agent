@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_loan_delinquency_tag_history
 DROP TABLE IF EXISTS retail_banking_dm.dwd_loan_delinquency_event;
 -- table_id: 8daeaef7-344f-41c5-bee8-aab041e0795b
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_delinquency_event (
     -- column_id: b4735132-b2f6-482f-8e81-cef19697daad
     `id` BIGINT NOT NULL COMMENT 'Fineract source column id',
+    -- column_id: 7d53e052-4fb3-48c6-a971-14eab029c04e
+    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 8c90157b-ce0f-4c7b-93b4-39b3b9988da2
     `delinquency_range_id` BIGINT NOT NULL COMMENT 'Fineract source column delinquency_range_id',
     -- column_id: b33fb2ac-34fa-45dd-8319-c3b43453e2c8
@@ -22,11 +26,10 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_delinquency_event (
     `last_modified_by` BIGINT NOT NULL COMMENT 'Fineract source column last_modified_by',
     -- column_id: f3dbd500-4b56-40e4-8bc5-58bd493fdd4f
     `last_modified_on_utc` DATETIME NOT NULL COMMENT 'Fineract source column last_modified_on_utc',
-    -- column_id: 7d53e052-4fb3-48c6-a971-14eab029c04e
-    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: b7a1ea2c-06cb-438b-989a-006ac8f8111c
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

@@ -256,6 +256,10 @@ def _ddl_change_statements(sql_text: str) -> list[str]:
     return _split_sql_statements(sql_text)
 
 
+def _is_session_setting(statement: str) -> bool:
+    return bool(re.match(r"^\s*SET\b", statement, re.IGNORECASE))
+
+
 def _split_identifier_path(identifier: str) -> list[str]:
     parts = []
     current = []
@@ -427,7 +431,12 @@ def _wait_for_table_alter_jobs(
         time.sleep(poll_interval_seconds)
 
 
-def _execute_ddl_statement(statement: str, qa_db: str) -> None:
+def _execute_ddl_statement(
+    statement: str,
+    qa_db: str,
+    *,
+    session_settings: tuple[str, ...] = (),
+) -> None:
     before_refs, after_refs = _alter_table_wait_refs(statement, qa_db)
     known_job_ids_by_ref = {}
 
@@ -435,7 +444,10 @@ def _execute_ddl_statement(statement: str, qa_db: str) -> None:
         jobs = _wait_for_table_alter_jobs(db_name, table_name, qa=True)
         known_job_ids_by_ref[(db_name, table_name)] = _job_ids(jobs)
 
-    run_sql(statement, qa_db, qa=True)
+    if session_settings:
+        run_sql_text("\n".join((*session_settings, statement)), qa_db, qa=True)
+    else:
+        run_sql(statement, qa_db, qa=True)
 
     for db_name, table_name in after_refs:
         known_job_ids = known_job_ids_by_ref.get((db_name, table_name))
@@ -1556,10 +1568,19 @@ def execute_shadow_plan(
                 continue
             statements = _ddl_change_statements(sql)
             statement_results = []
+            session_settings = []
             try:
                 for statement in statements:
                     try:
-                        _execute_ddl_statement(statement, qa_db)
+                        _execute_ddl_statement(
+                            statement,
+                            qa_db,
+                            session_settings=(
+                                ()
+                                if _is_session_setting(statement)
+                                else tuple(session_settings)
+                            ),
+                        )
                     except Exception as exc:
                         statement_results.append(
                             _ddl_statement_result(
@@ -1569,6 +1590,8 @@ def execute_shadow_plan(
                             )
                         )
                         raise
+                    if _is_session_setting(statement):
+                        session_settings.append(statement)
                     statement_results.append(
                         _ddl_statement_result(statement, "success")
                     )

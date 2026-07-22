@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_wc_loan_transaction
 DROP TABLE IF EXISTS retail_banking_dm.dwd_wc_loan_transaction;
 -- table_id: d52e5024-97bd-4376-b865-46363a115695
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_wc_loan_transaction (
     -- column_id: 917d3c7a-b8ae-49b3-874c-db574c48fcb1
     `id` BIGINT NOT NULL COMMENT 'Fineract source column id',
+    -- column_id: 050d8111-97bf-48ba-a42e-2ef1e63b604e
+    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: bd96142e-bdf9-48fa-ae84-99d57f4f8839
     `wc_loan_id` BIGINT NOT NULL COMMENT 'Fineract source column wc_loan_id',
     -- column_id: e4f1272a-105f-48c0-86ed-1b8f5a39f0a1
@@ -36,11 +40,10 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_wc_loan_transaction (
     `reversal_external_id` VARCHAR(64) NULL COMMENT 'Fineract source column reversal_external_id',
     -- column_id: 745c8743-534a-4f83-ab39-78e6ce1b8889
     `reversed_on_date` DATE NULL COMMENT 'Fineract source column reversed_on_date',
-    -- column_id: 050d8111-97bf-48ba-a42e-2ef1e63b604e
-    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: d0653c3e-34b6-43e3-a9bf-493ec0364ebf
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

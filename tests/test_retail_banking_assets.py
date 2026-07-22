@@ -14,6 +14,7 @@ import yaml
 from dw_refactor_agent.execution import task_run
 from dw_refactor_agent.execution.date_window import resolve_etl_dates
 from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.sql.doris import extract_doris_partition_column
 
 PROJECT_DIR = Path(__file__).resolve().parents[1] / "warehouses/retail_banking"
 MAPPINGS_DIR = PROJECT_DIR / "mappings"
@@ -170,6 +171,50 @@ def test_retail_banking_physical_table_names_fit_doris_limit():
     )
 
 
+def test_retail_banking_incremental_slices_have_physical_partitions():
+    counts = {"incremental": 0, "full": 0}
+    for layer in ("mid", "ads"):
+        for model_path in sorted(
+            (PROJECT_DIR / layer / "models").glob("*.yaml")
+        ):
+            model = _load_yaml(model_path)
+            execution = model["execution"]
+            ddl_path = PROJECT_DIR / layer / "ddl" / f"{model_path.stem}.sql"
+            ddl = ddl_path.read_text(encoding="utf-8")
+
+            if execution["materialized"] == "full":
+                counts["full"] += 1
+                assert "PARTITION BY" not in ddl, ddl_path
+                continue
+
+            counts["incremental"] += 1
+            slice_column = execution["slice"]["column"]
+            assert execution["slice"]["period"] == "D", model_path
+            assert f"AUTO PARTITION BY LIST (`{slice_column}`) ()" in ddl, (
+                ddl_path
+            )
+            assert extract_doris_partition_column(ddl) == slice_column
+
+            key_match = re.search(
+                r"DUPLICATE\s+KEY\s*\(([^)]*)\)", ddl, flags=re.I
+            )
+            assert key_match is not None, ddl_path
+            assert slice_column in re.findall(r"`([^`]+)`", key_match.group(1))
+
+            column_match = re.search(
+                rf"`{re.escape(slice_column)}`\s+DATE\s+(NULL|NOT NULL)",
+                ddl,
+                flags=re.I,
+            )
+            assert column_match is not None, ddl_path
+            if column_match.group(1).upper() == "NULL":
+                assert "SET allow_partition_column_nullable = true;" in ddl, (
+                    ddl_path
+                )
+
+    assert counts == {"incremental": 93, "full": 42}
+
+
 def test_retail_banking_complete_layer_mapping_covers_every_source():
     source_mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")[
         "mappings"
@@ -307,6 +352,14 @@ def test_retail_generator_preserves_process_handoff_tasks(
         assert (generated_project / relative_path).read_text(
             encoding="utf-8"
         ) == (PROJECT_DIR / relative_path).read_text(encoding="utf-8")
+
+    for ddl_path in sorted((PROJECT_DIR / "mid/ddl").glob("*.sql")) + sorted(
+        (PROJECT_DIR / "ads/ddl").glob("*.sql")
+    ):
+        relative_path = ddl_path.relative_to(PROJECT_DIR)
+        assert (generated_project / relative_path).read_text(
+            encoding="utf-8"
+        ) == ddl_path.read_text(encoding="utf-8")
 
 
 def test_retail_banking_current_state_snapshots_retain_daily_slices():

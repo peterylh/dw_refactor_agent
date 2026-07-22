@@ -356,15 +356,15 @@ def parse_doris_partitions(sql_text: str) -> PartitionCatalog:
         partitions = [
             _parse_list_partition(clause, column) for clause in clauses
         ]
-    dynamic_enabled = re.search(
+    runtime_partitioned = re.search(
         r"[\"']dynamic_partition\.enable[\"']\s*=\s*[\"']true[\"']",
         ddl_text,
         flags=re.IGNORECASE,
-    )
+    ) or re.search(r"\bAUTO\s+PARTITION\s+BY\b", ddl_text, re.IGNORECASE)
     return PartitionCatalog(
         column,
         tuple(partitions),
-        complete=dynamic_enabled is None,
+        complete=runtime_partitioned is None,
     )
 
 

@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_loan_repayment_schedule
 DROP TABLE IF EXISTS retail_banking_dm.dwd_loan_installment;
 -- table_id: b93902f1-b6af-4366-bb81-ff122372db88
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_installment (
     -- column_id: f030e39f-a962-4b5c-9ed8-b56026a318f7
     `id` BIGINT NOT NULL COMMENT 'Fineract source column id',
+    -- column_id: 154988d2-48cc-4140-bc17-218fa8706dcd
+    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 605d72b5-93ec-4891-bdea-65f063b93cb6
     `loan_id` BIGINT NOT NULL COMMENT 'Fineract source column loan_id',
     -- column_id: a9190b8f-75f0-4d7c-a280-c533e994f20b
@@ -86,11 +90,10 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_installment (
     `credited_penalty` DECIMAL(19,6) NULL COMMENT 'Fineract source column credited_penalty',
     -- column_id: 7e643e8f-7e76-4dda-92f3-bc34682487f2
     `is_re_aged` BOOLEAN NOT NULL COMMENT 'Fineract source column is_re_aged',
-    -- column_id: 154988d2-48cc-4140-bc17-218fa8706dcd
-    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 0ee1e385-914c-4e71-9af6-3261160b9453
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

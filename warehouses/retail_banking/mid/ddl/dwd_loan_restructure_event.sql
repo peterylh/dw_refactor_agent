@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_loan_reschedule_request
 DROP TABLE IF EXISTS retail_banking_dm.dwd_loan_restructure_event;
 -- table_id: 880314a1-ed7d-4573-8930-f86ba2ad8ff6
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_restructure_event (
     -- column_id: ab098a34-a012-4d8b-8633-a4f45b0b558f
     `id` BIGINT NOT NULL COMMENT 'Fineract source column id',
+    -- column_id: a53f4c44-5727-452f-b2c4-5f3dc8ef1194
+    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: edcd7789-5656-41a3-af89-a95cc85bfe3e
     `loan_id` BIGINT NOT NULL COMMENT 'Fineract source column loan_id',
     -- column_id: b5e2da4a-c7c4-4792-b7f4-c6fd63e61509
@@ -30,11 +34,10 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_restructure_event (
     `rejected_on_date` DATE NULL COMMENT 'Fineract source column rejected_on_date',
     -- column_id: 5b4e3bc0-60d3-43da-90b7-1b6c807ceda5
     `rejected_by_user_id` BIGINT NULL COMMENT 'Fineract source column rejected_by_user_id',
-    -- column_id: a53f4c44-5727-452f-b2c4-5f3dc8ef1194
-    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 86034a7c-28f0-40a3-9988-9804034a4b61
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

@@ -6,7 +6,11 @@ import pytest
 
 import dw_refactor_agent.config as config
 import dw_refactor_agent.refactor.verification_plan as verification_plan_module
-from dw_refactor_agent.ddl_deriver.ddl_deriver import ColumnDef, TableDef
+from dw_refactor_agent.ddl_deriver.ddl_deriver import (
+    ColumnDef,
+    TableDef,
+    parse_create_table,
+)
 from dw_refactor_agent.ddl_deriver.schema_ids import SchemaIdentityError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.schedule_graph import ScheduleGraph
@@ -165,6 +169,39 @@ CREATE TABLE demo_dm.dwd_order (
             "matched_by": "column_id",
         }
     ]
+
+
+def test_derive_project_ddl_changes_includes_physical_partition_rebuild(
+    tmp_path, monkeypatch
+):
+    old_ddl = f"""\
+-- table_id: {TABLE_ID}
+CREATE TABLE demo_dm.dwd_order (
+    -- column_id: {COLUMN_ID}
+    order_id BIGINT NOT NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 4;
+"""
+    new_ddl = old_ddl.replace(
+        "DISTRIBUTED BY HASH(order_id)",
+        "AUTO PARTITION BY LIST (`order_id`) ()\n"
+        "DISTRIBUTED BY HASH(order_id)",
+    )
+    _configure_identity_project(tmp_path, monkeypatch, new_ddl)
+    old_table = parse_create_table(old_ddl)
+    assert old_table is not None
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.verification_plan.load_git_tables",
+        lambda repo, ddl_rel, base_ref: (
+            {"dwd_order": old_table} if "/mid/" in ddl_rel else {}
+        ),
+    )
+
+    changes = derive_project_ddl_changes("demo", "base", repo_root=tmp_path)
+
+    assert [change["change_type"] for change in changes] == ["DROP", "CREATE"]
+    assert "AUTO PARTITION BY LIST" in changes[1]["sql"]
 
 
 _NO_PARTITION = object()

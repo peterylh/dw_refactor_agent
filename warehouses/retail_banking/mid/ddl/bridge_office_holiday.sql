@@ -1,3 +1,5 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_holiday_office
 DROP TABLE IF EXISTS retail_banking_dm.bridge_office_holiday;
 -- table_id: 12c90243-065d-4108-8cd3-4d6c415bdcc5
@@ -11,6 +13,7 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.bridge_office_holiday (
     -- column_id: 4f24d252-76b1-43cb-a2bd-30a6c33fc9c4
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`holiday_id`, `office_id`)
+DUPLICATE KEY(`holiday_id`, `office_id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`holiday_id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

@@ -75,6 +75,8 @@ class TableDef:
     key_type: str = "DUPLICATE"
     key_columns: List[str] = field(default_factory=list)
     distribution_col: str = ""
+    distribution_clause: str = ""
+    partition_clause: str = ""
     raw_ddl: str = ""  # 完整的 CREATE TABLE 语句
     table_id: str = ""  # UUID,同一逻辑表跨重命名保持不变
 
@@ -389,6 +391,32 @@ def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
     )
 
 
+_PARTITION_CLAUSE_RE = re.compile(
+    r"\b(?P<clause>(?:AUTO\s+)?PARTITION\s+BY\s+.*?)"
+    r"(?=\bDISTRIBUTED\s+BY\b|\bPROPERTIES\s*\(|;\s*$|\Z)",
+    re.IGNORECASE | re.DOTALL | re.MULTILINE,
+)
+_DISTRIBUTION_CLAUSE_RE = re.compile(
+    r"\b(?P<clause>DISTRIBUTED\s+BY\s+.*?)"
+    r"(?=\bPROPERTIES\s*\(|;\s*$|\Z)",
+    re.IGNORECASE | re.DOTALL | re.MULTILINE,
+)
+
+
+def _extract_partition_clause(sql_text: str) -> str:
+    match = _PARTITION_CLAUSE_RE.search(str(sql_text or ""))
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", match.group("clause")).strip()
+
+
+def _extract_distribution_clause(sql_text: str) -> str:
+    match = _DISTRIBUTION_CLAUSE_RE.search(str(sql_text or ""))
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", match.group("clause")).strip()
+
+
 def parse_create_table(sql_text: str) -> Optional[TableDef]:
     try:
         statements = sqlglot.parse(
@@ -423,6 +451,8 @@ def parse_create_table(sql_text: str) -> Optional[TableDef]:
 
         key_type, key_columns = extract_doris_key(sql_text)
         distribution_col = extract_doris_distribution_column(sql_text)
+        distribution_clause = _extract_distribution_clause(sql_text)
+        partition_clause = _extract_partition_clause(sql_text)
 
         # 用原始文本作为 raw_ddl,避免 sqlglot 再生 bug(如 UNIQUE KEY)
         raw_ddl = (
@@ -440,6 +470,8 @@ def parse_create_table(sql_text: str) -> Optional[TableDef]:
             key_columns=key_columns or ([columns[0].name] if columns else []),
             distribution_col=distribution_col
             or (columns[0].name if columns else ""),
+            distribution_clause=distribution_clause,
+            partition_clause=partition_clause,
             raw_ddl=raw_ddl,
             table_id=table_id,
         )
@@ -871,6 +903,75 @@ def _validate_global_column_ids(tables: dict, side: str) -> None:
             by_id[column_id] = owner
 
 
+def _column_identity(table: TableDef, column_name: str) -> str:
+    normalized_name = str(column_name or "").strip().strip("`").casefold()
+    for column in table.columns:
+        if column.name.casefold() != normalized_name:
+            continue
+        column_id = normalize_schema_id(column.column_id)
+        return f"id:{column_id}" if column_id else f"name:{normalized_name}"
+    return f"name:{normalized_name}"
+
+
+def _layout_clause_signature(table: TableDef, clause: str) -> str:
+    signature = clause.casefold()
+    for column in sorted(
+        table.columns, key=lambda item: len(item.name), reverse=True
+    ):
+        identity = _column_identity(table, column.name)
+        pattern = rf"(?<![a-z0-9_])(?:`{re.escape(column.name)}`|{re.escape(column.name)})(?![a-z0-9_])"
+        signature = re.sub(
+            pattern,
+            identity,
+            signature,
+            flags=re.IGNORECASE,
+        )
+    return re.sub(r"\s+", " ", signature).strip()
+
+
+def _surviving_column_order(
+    table: TableDef, shared: set[str]
+) -> tuple[str, ...]:
+    return tuple(
+        _column_identity(table, column.name)
+        for column in table.columns
+        if _column_identity(table, column.name) in shared
+    )
+
+
+def _physical_layout_changed(old: TableDef, new: TableDef) -> bool:
+    """Return whether Doris requires rebuilding the table's physical layout."""
+    # Programmatic TableDef fixtures may intentionally omit the source DDL and
+    # therefore cannot describe the complete physical layout.
+    if not old.raw_ddl or not new.raw_ddl:
+        return False
+
+    old_column_ids = {
+        _column_identity(old, column.name) for column in old.columns
+    }
+    new_column_ids = {
+        _column_identity(new, column.name) for column in new.columns
+    }
+    shared_column_ids = old_column_ids & new_column_ids
+    old_signature = (
+        old.engine.casefold(),
+        old.key_type.casefold(),
+        tuple(_column_identity(old, name) for name in old.key_columns),
+        _layout_clause_signature(old, old.distribution_clause),
+        _layout_clause_signature(old, old.partition_clause),
+        _surviving_column_order(old, shared_column_ids),
+    )
+    new_signature = (
+        new.engine.casefold(),
+        new.key_type.casefold(),
+        tuple(_column_identity(new, name) for name in new.key_columns),
+        _layout_clause_signature(new, new.distribution_clause),
+        _layout_clause_signature(new, new.partition_clause),
+        _surviving_column_order(new, shared_column_ids),
+    )
+    return old_signature != new_signature
+
+
 def derive_ddl_changes(
     old_tables: dict,
     new_tables: dict,
@@ -958,14 +1059,17 @@ def derive_ddl_changes(
     for d, c in rename_pairs:
         old_t = old_tables[d]
         new_t = new_tables[c]
-        changes.append(RenameTable(old_t, new_t))
-        alters = _derive_alter_columns(
-            old_t, new_t, legacy_identity=legacy_identity
-        )
-        if any(alters.values()):
-            alter = alter_to_change(c, old_t, new_t, alters)
-            alter.table_name = new_t.full_name
-            changes.append(alter)
+        if _physical_layout_changed(old_t, new_t):
+            changes.extend([DropTable(old_t.full_name), CreateTable(new_t)])
+        else:
+            changes.append(RenameTable(old_t, new_t))
+            alters = _derive_alter_columns(
+                old_t, new_t, legacy_identity=legacy_identity
+            )
+            if any(alters.values()):
+                alter = alter_to_change(c, old_t, new_t, alters)
+                alter.table_name = new_t.full_name
+                changes.append(alter)
         dropped_names.discard(d)
         created_names.discard(c)
 
@@ -982,6 +1086,9 @@ def derive_ddl_changes(
     for name in sorted(common_names):
         old_t = old_tables[name]
         new_t = new_tables[name]
+        if _physical_layout_changed(old_t, new_t):
+            changes.extend([DropTable(old_t.full_name), CreateTable(new_t)])
+            continue
         alters = _derive_alter_columns(
             old_t, new_t, legacy_identity=legacy_identity
         )

@@ -17,6 +17,7 @@ from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     format_changes,
     generate_table_id,
     inject_table_id,
+    parse_create_table,
 )
 from tests.case_matrix import case_matrix
 
@@ -128,6 +129,100 @@ def test_change_formatting_and_table_id_scenarios():
     _assert_extract_table_id()
     _assert_inject_table_id()
     _assert_generate_table_id_format()
+
+
+def test_physical_partition_change_rebuilds_table():
+    old = parse_create_table(
+        """\
+CREATE TABLE demo_dm.dwd_event (
+    event_id BIGINT NOT NULL,
+    business_date DATE NULL
+) ENGINE=OLAP
+DUPLICATE KEY(event_id)
+DISTRIBUTED BY HASH(event_id) BUCKETS 4;
+"""
+    )
+    new = parse_create_table(
+        """\
+CREATE TABLE demo_dm.dwd_event (
+    event_id BIGINT NOT NULL,
+    business_date DATE NULL
+) ENGINE=OLAP
+DUPLICATE KEY(event_id)
+AUTO PARTITION BY LIST (`business_date`) ()
+DISTRIBUTED BY HASH(event_id) BUCKETS 4;
+"""
+    )
+
+    changes = derive_ddl_changes({"dwd_event": old}, {"dwd_event": new})
+
+    assert [type(change) for change in changes] == [DropTable, CreateTable]
+
+
+def test_physical_key_and_column_order_change_rebuilds_table():
+    old = parse_create_table(
+        """\
+CREATE TABLE demo_dm.dwd_event (
+    event_id BIGINT NOT NULL,
+    business_date DATE NULL,
+    amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(event_id)
+DISTRIBUTED BY HASH(event_id) BUCKETS 4;
+"""
+    )
+    new = parse_create_table(
+        """\
+CREATE TABLE demo_dm.dwd_event (
+    business_date DATE NULL,
+    event_id BIGINT NOT NULL,
+    amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(business_date, event_id)
+DISTRIBUTED BY HASH(event_id) BUCKETS 4;
+"""
+    )
+
+    changes = derive_ddl_changes({"dwd_event": old}, {"dwd_event": new})
+
+    assert [type(change) for change in changes] == [DropTable, CreateTable]
+
+
+@pytest.mark.parametrize(
+    ("old_distribution", "new_distribution"),
+    [
+        (
+            "DISTRIBUTED BY HASH(event_id, business_date) BUCKETS 4",
+            "DISTRIBUTED BY HASH(event_id, amount) BUCKETS 4",
+        ),
+        (
+            "DISTRIBUTED BY HASH(event_id) BUCKETS 4",
+            "DISTRIBUTED BY RANDOM BUCKETS 4",
+        ),
+        (
+            "DISTRIBUTED BY HASH(event_id) BUCKETS 4",
+            "DISTRIBUTED BY HASH(event_id) BUCKETS 8",
+        ),
+    ],
+)
+def test_physical_distribution_change_rebuilds_table(
+    old_distribution, new_distribution
+):
+    ddl = """\
+CREATE TABLE demo_dm.dwd_event (
+    event_id BIGINT NOT NULL,
+    business_date DATE NULL,
+    amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(event_id)
+{distribution};
+"""
+    old = parse_create_table(ddl.format(distribution=old_distribution))
+    new = parse_create_table(ddl.format(distribution=new_distribution))
+
+    changes = derive_ddl_changes({"dwd_event": old}, {"dwd_event": new})
+
+    assert [type(change) for change in changes] == [DropTable, CreateTable]
 
 
 # ============================================================

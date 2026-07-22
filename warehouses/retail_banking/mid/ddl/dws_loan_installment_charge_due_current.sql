@@ -24,5 +24,6 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dws_loan_installment_charge_due_cur
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
 DUPLICATE KEY(`due_date`, `loan_id`, `loan_charge_id`)
+AUTO PARTITION BY LIST (`due_date`) ()
 DISTRIBUTED BY HASH(`due_date`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

@@ -22,5 +22,6 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.ads_internal_transfer_kpi_daily (
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
 DUPLICATE KEY(`stat_date`, `from_office_id`, `to_office_id`, `transfer_type`, `currency_code`)
+AUTO PARTITION BY LIST (`stat_date`) ()
 DISTRIBUTED BY HASH(`stat_date`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

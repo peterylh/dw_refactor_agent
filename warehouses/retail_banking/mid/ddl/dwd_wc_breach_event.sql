@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_wc_loan_breach_action
 DROP TABLE IF EXISTS retail_banking_dm.dwd_wc_breach_event;
 -- table_id: 737b32a9-ef47-4b04-bf58-02994258f259
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_wc_breach_event (
     -- column_id: 7a311099-c44c-4322-9dc5-0e2df0feec17
     `id` BIGINT NOT NULL COMMENT 'Fineract source column id',
+    -- column_id: e3318239-0312-4b70-a395-dfef93f81f1b
+    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 11455917-68c4-4c32-8455-6d6539631e62
     `wc_loan_id` BIGINT NOT NULL COMMENT 'Fineract source column wc_loan_id',
     -- column_id: 460cec9e-bb59-4d3b-9630-8ea529db27ec
@@ -28,11 +32,10 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_wc_breach_event (
     `frequency` INT NULL COMMENT 'Fineract source column frequency',
     -- column_id: 9799897d-4eb4-4bb6-9339-509fc95423ee
     `frequency_type` VARCHAR(50) NULL COMMENT 'Fineract source column frequency_type',
-    -- column_id: e3318239-0312-4b70-a395-dfef93f81f1b
-    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: c992df0c-fadd-441b-b404-e579a4eee4c0
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

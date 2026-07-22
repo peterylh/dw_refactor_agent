@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_loanproduct_provisioning_entry
 DROP TABLE IF EXISTS retail_banking_dm.dwd_loan_provision_entry;
 -- table_id: bca9a4c0-4bad-4f20-89f1-48d1999c06c3
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_provision_entry (
     -- column_id: ff1bd84f-8336-4af6-92fe-f1541dd45d45
     `id` BIGINT NOT NULL COMMENT 'Fineract source column id',
+    -- column_id: c8963629-f80e-412c-930d-7b502f55041d
+    `provision_date` DATE NULL COMMENT 'Provisioning run business date',
     -- column_id: 27de3514-efe1-4e14-8827-2b7c4d352b0b
     `history_id` BIGINT NOT NULL COMMENT 'Fineract source column history_id',
     -- column_id: b1b3f1a7-d803-4c4b-87fe-db8fba608632
@@ -24,13 +28,12 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_provision_entry (
     `liability_account` BIGINT NULL COMMENT 'Fineract source column liability_account',
     -- column_id: 3f8b58a4-1fea-4361-8106-21943859d97c
     `expense_account` BIGINT NULL COMMENT 'Fineract source column expense_account',
-    -- column_id: c8963629-f80e-412c-930d-7b502f55041d
-    `provision_date` DATE NULL COMMENT 'Provisioning run business date',
     -- column_id: 142e2876-3520-458b-bbbc-223b322d886e
     `journal_entry_created` BOOLEAN NULL COMMENT 'Whether the provisioning run posted journal entries',
     -- column_id: a83149e6-ed4d-4f20-9c75-0b3894c5fa36
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `provision_date`)
+AUTO PARTITION BY LIST (`provision_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

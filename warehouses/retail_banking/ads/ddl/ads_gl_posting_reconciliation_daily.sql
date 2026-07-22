@@ -22,5 +22,6 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.ads_gl_posting_reconciliation_daily
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
 DUPLICATE KEY(`stat_date`, `transaction_id`, `office_id`, `currency_code`)
+AUTO PARTITION BY LIST (`stat_date`) ()
 DISTRIBUTED BY HASH(`stat_date`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

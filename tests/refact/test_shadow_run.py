@@ -577,6 +577,67 @@ def test_execute_shadow_plan_runs_case_only_rename_steps_in_order(
     ]
 
 
+def test_execute_shadow_plan_reapplies_session_settings_with_create(
+    tmp_path, monkeypatch
+):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [
+            {
+                "change_type": "CREATE",
+                "table_name": "shop_dm.dwd_event",
+                "short_name": "dwd_event",
+                "sql": (
+                    "SET allow_partition_column_nullable = true; "
+                    "DROP TABLE IF EXISTS shop_dm.dwd_event; "
+                    "CREATE TABLE shop_dm.dwd_event ("
+                    "business_date DATE NULL"
+                    ") ENGINE=OLAP DUPLICATE KEY(business_date) "
+                    "AUTO PARTITION BY LIST (`business_date`) () "
+                    "DISTRIBUTED BY HASH(business_date) BUCKETS 4;"
+                ),
+            }
+        ],
+        "partition_info": {},
+        "jobs_to_run": [],
+        "verification": {"checks": []},
+    }
+    single_calls = []
+    batch_calls = []
+
+    def fake_run_sql(sql, db="", qa=False):
+        single_calls.append((sql, db, qa))
+        return ""
+
+    def fake_run_sql_text(sql, db="", qa=False):
+        batch_calls.append((sql, db, qa))
+        return ""
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql", fake_run_sql
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        fake_run_sql_text,
+    )
+
+    result = execute_shadow_plan(plan, root=tmp_path)
+
+    setting = "SET allow_partition_column_nullable = true;"
+    assert single_calls[0] == (setting, "shop_dm_qa", True)
+    create_batch = next(
+        sql for sql, _, _ in batch_calls if "CREATE TABLE" in sql
+    )
+    assert create_batch.startswith(f"{setting}\nCREATE TABLE")
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    ddl_result = phase_by_name["apply_ddl_changes"]["ddl_changes"][0]
+    assert ddl_result["status"] == "success"
+    assert len(ddl_result["statements"]) == 3
+
+
 def test_wait_for_table_alter_jobs_polls_until_finished(monkeypatch):
     outputs = [
         (

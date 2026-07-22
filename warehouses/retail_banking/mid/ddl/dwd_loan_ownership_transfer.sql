@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_external_asset_owner_transfer
 DROP TABLE IF EXISTS retail_banking_dm.dwd_loan_ownership_transfer;
 -- table_id: a75bce20-c404-41a5-b0bd-8b3d76ca6e36
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_ownership_transfer (
     -- column_id: ce433624-53a9-4247-83e2-9bf88e0c8b34
     `id` BIGINT NOT NULL COMMENT 'Internal ID',
+    -- column_id: bbe15ba8-e81b-4fa3-999d-432f12b72255
+    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: bf658134-8713-4686-8a4d-1a7c97a56dc1
     `owner_id` BIGINT NOT NULL COMMENT 'Fineract source column owner_id',
     -- column_id: d135eed0-d8c1-44fe-ace4-5f066831d3e1
@@ -36,11 +40,10 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_loan_ownership_transfer (
     `external_group_id` VARCHAR(100) NULL COMMENT 'Fineract source column external_group_id',
     -- column_id: 337e4397-41c0-4a72-ad3a-25685fddfc7a
     `previous_owner_id` BIGINT NULL COMMENT 'Fineract source column previous_owner_id',
-    -- column_id: bbe15ba8-e81b-4fa3-999d-432f12b72255
-    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 3bed4040-4493-4e18-9e0e-9102fb67bf38
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

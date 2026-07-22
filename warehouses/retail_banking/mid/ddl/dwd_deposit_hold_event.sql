@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_deposit_account_on_hold_transaction
 DROP TABLE IF EXISTS retail_banking_dm.dwd_deposit_hold_event;
 -- table_id: 63bb4b1f-908d-47a7-b961-2fcdfd498444
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_deposit_hold_event (
     -- column_id: d0b30159-0db1-4d87-9165-6cd3245ec53a
     `id` BIGINT NOT NULL COMMENT 'Fineract source column id',
+    -- column_id: 25c62e4e-9255-4114-93e9-0d9e2c7af249
+    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: de0cc3f2-41e6-452c-b367-4a529e3d88a6
     `savings_account_id` BIGINT NOT NULL COMMENT 'Fineract source column savings_account_id',
     -- column_id: 7a092353-ec94-4dfd-b54a-6f68af6bb72f
@@ -24,11 +28,10 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_deposit_hold_event (
     `created_on_utc` DATETIME NOT NULL COMMENT 'Fineract source column created_on_utc',
     -- column_id: cb857887-93c8-4c0f-903e-d1e1bb84537c
     `last_modified_on_utc` DATETIME NOT NULL COMMENT 'Fineract source column last_modified_on_utc',
-    -- column_id: 25c62e4e-9255-4114-93e9-0d9e2c7af249
-    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 21de7df4-8b7c-44f4-a373-40333a150958
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

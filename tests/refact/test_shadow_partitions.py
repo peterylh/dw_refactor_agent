@@ -73,8 +73,20 @@ PROPERTIES (
             date(2025, 3, 15),
             "runtime partitions",
         ),
+        (
+            """CREATE TABLE dm.sales (stat_date DATE) ENGINE=OLAP
+AUTO PARTITION BY LIST(stat_date) (
+  PARTITION p20250115 VALUES IN ("2025-01-15")
+);""",
+            date(2025, 1, 16),
+            "runtime partitions",
+        ),
     ],
-    ids=("no-static-partitions", "missing-dynamic-runtime-partition"),
+    ids=(
+        "no-static-partitions",
+        "missing-dynamic-runtime-partition",
+        "missing-auto-runtime-partition",
+    ),
 )
 def test_partition_catalog_without_static_proof_is_unknown(
     ddl, scope_date, reason

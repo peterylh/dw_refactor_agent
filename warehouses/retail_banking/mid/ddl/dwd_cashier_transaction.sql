@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_cashier_transactions
 DROP TABLE IF EXISTS retail_banking_dm.dwd_cashier_transaction;
 -- table_id: fc93f5f8-8dc3-4890-b678-703862756dbe
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_cashier_transaction (
     -- column_id: 77c516c2-b8e6-403b-acb6-cbb79219ea4c
     `id` BIGINT NOT NULL COMMENT 'Fineract source column id',
+    -- column_id: c328dc62-57ee-447c-bcf0-d1e3b1993fb9
+    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 816a2c1e-6d42-4a7d-8037-e87fd8b65bc6
     `cashier_id` BIGINT NOT NULL COMMENT 'Fineract source column cashier_id',
     -- column_id: f3909adc-aca6-48a8-9ca5-e478ffa96e91
@@ -22,11 +26,10 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_cashier_transaction (
     `txn_note` VARCHAR(200) NULL COMMENT 'Fineract source column txn_note',
     -- column_id: 59d4e2c3-45b2-4fb1-ae43-27d02cdddedc
     `currency_code` VARCHAR(3) NULL COMMENT 'Fineract source column currency_code',
-    -- column_id: c328dc62-57ee-447c-bcf0-d1e3b1993fb9
-    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 56d2c95e-210b-4cf8-80f1-860539feddd6
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

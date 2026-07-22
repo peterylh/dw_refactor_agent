@@ -1,9 +1,13 @@
+SET allow_partition_column_nullable = true;
+
 -- DWD generated from m_account_transfer_transaction
 DROP TABLE IF EXISTS retail_banking_dm.dwd_account_transfer_transaction;
 -- table_id: a050e64f-4159-42b9-b5c9-f8e9c7ed1409
 CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_account_transfer_transaction (
     -- column_id: feda5a9e-8634-41d5-8e52-06b296f9fa2a
     `id` BIGINT NOT NULL COMMENT 'Fineract source column id',
+    -- column_id: 18ea527c-af2c-443b-8862-c4d4f70c7663
+    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 7a1a8470-503e-45eb-bdcc-6d1529ee38ba
     `account_transfer_details_id` BIGINT NOT NULL COMMENT 'Fineract source column account_transfer_details_id',
     -- column_id: a51d72b9-8662-4e97-bf58-31fbd8179ddd
@@ -34,11 +38,10 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dwd_account_transfer_transaction (
     `to_office_id` BIGINT NOT NULL COMMENT 'Fineract source column to_office_id',
     -- column_id: 7d4db0c9-7f2b-44e4-979f-8260e4761396
     `transfer_type` SMALLINT NULL COMMENT 'Fineract source column transfer_type',
-    -- column_id: 18ea527c-af2c-443b-8862-c4d4f70c7663
-    `business_date` DATE NULL COMMENT 'Standardized business date from the semantic spec',
     -- column_id: 212c0430-4d4c-4743-bf9e-e3968cb9d01d
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(`id`)
+DUPLICATE KEY(`id`, `business_date`)
+AUTO PARTITION BY LIST (`business_date`) ()
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");

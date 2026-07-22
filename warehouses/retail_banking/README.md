@@ -93,6 +93,14 @@ python -m dw_refactor_agent.execution.reinit_project \
 
 ## Two-month bootstrap and daily operation
 
+All 93 incremental MID/ADS models are physically partitioned on the date column
+declared by `execution.slice`. The DDL uses Doris AUTO LIST partitions so a
+partition is created on demand for every exact business date, including dates
+replayed outside the checked-in fixture window. Some DWD contracts deliberately
+retain rows whose business date is unknown; their DDL enables nullable partition
+columns in the table-creation session so those rows receive their own physical
+partition instead of being dropped or assigned a fabricated date.
+
 For a production bootstrap, first load the required two calendar months into
 ODS with the upstream ingestion process. The checked-in ODS SQL is only smoke
 data and must not replace production ingestion. Then preserve the loaded ODS,

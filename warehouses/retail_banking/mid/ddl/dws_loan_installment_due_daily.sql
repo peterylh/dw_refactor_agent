@@ -20,5 +20,6 @@ CREATE TABLE IF NOT EXISTS retail_banking_dm.dws_loan_installment_due_daily (
     `etl_time` DATETIME NOT NULL COMMENT '数仓技术时间'
 ) ENGINE=OLAP
 DUPLICATE KEY(`stat_date`, `loan_id`)
+AUTO PARTITION BY LIST (`stat_date`) ()
 DISTRIBUTED BY HASH(`stat_date`) BUCKETS 1
 PROPERTIES ("replication_num" = "1");
