@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.config.assets import ProjectTaskAsset
 from dw_refactor_agent.execution.invocation import TaskInvocation
 from dw_refactor_agent.execution.model_config import (
     ExecutionConfigError,
@@ -20,6 +21,26 @@ from dw_refactor_agent.execution.model_config import (
     slice_config_from_mapping,
 )
 from dw_refactor_agent.lineage.identifiers import identifier_match_key
+from dw_refactor_agent.sql.task_execution import (
+    load_execution_task_asset,
+    render_task_execution_sql,
+)
+from dw_refactor_agent.sql.task_template import TaskTemplateError
+
+
+@dataclass(frozen=True)
+class ResolvedExecutionContract:
+    """Validated join of model scheduling and task variable metadata."""
+
+    task_assets: tuple[ProjectTaskAsset, ...]
+    slice_param: str | None
+
+    def asset_for_path(self, path: Path) -> ProjectTaskAsset | None:
+        target = Path(path).resolve()
+        for asset in self.task_assets:
+            if asset.sql_path.resolve() == target:
+                return asset
+        return None
 
 
 @dataclass(frozen=True)
@@ -33,19 +54,28 @@ class TaskSpec:
     slice_period: str | None
     companion_path: Path | None
     historical_replay_supported: bool
+    execution_contract: ResolvedExecutionContract | None = None
 
 
 class ExecutionPlanner:
     """Create task invocations from warehouse/model execution config."""
 
-    def __init__(self, project: str, project_root: Path | None = None):
+    def __init__(
+        self,
+        project: str,
+        project_root: Path | None = None,
+        *,
+        db_env: str = "prod",
+    ):
         self.project = project
+        self.db_env = str(db_env)
         self._has_explicit_project_root = project_root is not None
         self.project_root = Path(project_root or config.core.PROJECT_ROOT)
         self.project_config = self._project_config()
         self.project_dir = self._project_dir()
         self.warehouse_execution = self._warehouse_execution_config()
         self.model_metadata = self._load_model_metadata()
+        self._task_asset_cache: dict[Path, ProjectTaskAsset] = {}
 
     def task_spec(
         self,
@@ -117,6 +147,34 @@ class ExecutionPlanner:
                 f"requires tasks/full_refresh/{job_name}_full_refresh.sql"
             )
 
+        try:
+            task_assets = [self._task_asset(Path(sql_path))]
+            self._validate_task_slice_contract(
+                execution_model_name,
+                task_assets[0],
+                expected_slice_param=(
+                    slice_config.param if slice_config else None
+                ),
+                allowed_partition_params=(
+                    {slice_config.param} if slice_config else set()
+                ),
+            )
+            if strategy == "companion" and companion_path is not None:
+                companion_asset = self._task_asset(companion_path)
+                self._validate_task_slice_contract(
+                    execution_model_name,
+                    companion_asset,
+                    expected_slice_param=None,
+                    allowed_partition_params=set(
+                        self._full_refresh_window_param_names()
+                    ),
+                )
+                task_assets.append(companion_asset)
+        except TaskTemplateError as exc:
+            raise ExecutionConfigError(
+                f"[{job_name}] task template is invalid: {exc}"
+            ) from exc
+
         return TaskSpec(
             job_name=job_name,
             sql_path=Path(sql_path),
@@ -129,6 +187,124 @@ class ExecutionPlanner:
             historical_replay_supported=bool(
                 raw_execution.get("historical_replay_supported", True)
             ),
+            execution_contract=ResolvedExecutionContract(
+                task_assets=tuple(task_assets),
+                slice_param=slice_config.param if slice_config else None,
+            ),
+        )
+
+    def _task_asset(self, sql_path: Path) -> ProjectTaskAsset:
+        key = Path(sql_path).resolve()
+        if key not in self._task_asset_cache:
+            self._task_asset_cache[key] = load_execution_task_asset(
+                self.project,
+                Path(sql_path),
+            )
+        return self._task_asset_cache[key]
+
+    def _validate_task_slice_contract(
+        self,
+        model_name: str,
+        asset: ProjectTaskAsset,
+        *,
+        expected_slice_param: str | None,
+        allowed_partition_params: set[str],
+    ) -> None:
+        if not asset.is_template:
+            return
+        usage = asset.template_definition.contract.usage
+        usage_params = {item.parameter for item in usage.slices}
+        expected = {expected_slice_param} if expected_slice_param else set()
+        if usage_params != expected:
+            raise ExecutionConfigError(
+                f"[{model_name}] task usage.slices parameters "
+                f"{sorted(usage_params)!r} must match execution.slice.param "
+                f"{sorted(expected)!r}"
+            )
+        partition_params = {item.parameter for item in usage.partitions}
+        if not partition_params.issubset(allowed_partition_params):
+            raise ExecutionConfigError(
+                f"[{model_name}] task usage.partitions parameters "
+                f"{sorted(partition_params)!r} must be provided by "
+                "the invocation parameters "
+                f"{sorted(allowed_partition_params)!r}"
+            )
+        contract = asset.template_definition.contract
+        parameters = contract.parameters_by_name
+
+        def startup_roots(prop: str) -> set[str]:
+            pending = [prop]
+            seen = set()
+            roots = set()
+            while pending:
+                current = pending.pop()
+                if current in seen:
+                    continue
+                seen.add(current)
+                definition = parameters[current]
+                dependencies = definition.dependencies()
+                if dependencies:
+                    pending.extend(dependencies)
+                    continue
+                roots.add(current)
+            return roots
+
+        startup_by_prop = {item.prop: item for item in contract.startup_params}
+        for mapping in usage.slices + usage.partitions:
+            valid_parameters = set()
+            for root in startup_roots(mapping.prop):
+                startup = startup_by_prop.get(root)
+                if startup is None:
+                    continue
+                valid_parameters.add(startup.prop)
+                prefix = "invocation."
+                if startup.source and startup.source.startswith(prefix):
+                    valid_parameters.add(startup.source[len(prefix) :])
+            if mapping.parameter not in valid_parameters:
+                raise ExecutionConfigError(
+                    f"[{model_name}] task usage.{mapping.kind}s prop "
+                    f"{mapping.prop!r} is not derived from startup "
+                    f"parameter {mapping.parameter!r}"
+                )
+
+    def _invocation(
+        self,
+        spec: TaskSpec,
+        *,
+        sql_path: Path,
+        params: dict[str, str],
+        full_refresh: bool,
+        strategy: str,
+    ) -> TaskInvocation:
+        contract = spec.execution_contract
+        asset = contract.asset_for_path(sql_path) if contract else None
+        try:
+            asset = asset or self._task_asset(sql_path)
+            rendered = render_task_execution_sql(
+                asset,
+                session_params=params,
+                project_config=self.project_config,
+                environment=self.db_env,
+            )
+        except TaskTemplateError as exc:
+            raise ExecutionConfigError(
+                f"[{spec.job_name}] task render failed: {exc}"
+            ) from exc
+        public_summary = {}
+        if rendered.is_template:
+            public_summary = dict(rendered.public_summary)
+            public_summary["session_params"] = dict(
+                rendered.public_session_params
+            )
+        return TaskInvocation(
+            job_name=spec.job_name,
+            sql_path=sql_path,
+            params=params,
+            full_refresh=full_refresh,
+            strategy=strategy,
+            render_inputs=rendered.render_inputs,
+            resolved_sql=rendered.sql,
+            public_summary=public_summary,
         )
 
     def plan_regular_run(
@@ -138,8 +314,8 @@ class ExecutionPlanner:
     ) -> list[TaskInvocation]:
         if spec.materialized == "full":
             return [
-                TaskInvocation(
-                    job_name=spec.job_name,
+                self._invocation(
+                    spec,
                     sql_path=spec.sql_path,
                     params={},
                     full_refresh=True,
@@ -155,8 +331,8 @@ class ExecutionPlanner:
             self._validate_historical_replay(spec, normalized)
             if not normalized:
                 return [
-                    TaskInvocation(
-                        job_name=spec.job_name,
+                    self._invocation(
+                        spec,
                         sql_path=spec.sql_path,
                         params={},
                         full_refresh=False,
@@ -164,8 +340,8 @@ class ExecutionPlanner:
                     )
                 ]
             return [
-                TaskInvocation(
-                    job_name=spec.job_name,
+                self._invocation(
+                    spec,
                     sql_path=spec.sql_path,
                     params={spec.slice_param: value},
                     full_refresh=False,
@@ -175,8 +351,8 @@ class ExecutionPlanner:
             ]
 
         return [
-            TaskInvocation(
-                job_name=spec.job_name,
+            self._invocation(
+                spec,
                 sql_path=spec.sql_path,
                 params={},
                 full_refresh=False,
@@ -213,8 +389,8 @@ class ExecutionPlanner:
             )
             self._validate_historical_replay(spec, normalized)
             return [
-                TaskInvocation(
-                    job_name=spec.job_name,
+                self._invocation(
+                    spec,
                     sql_path=spec.sql_path,
                     params={spec.slice_param: value}
                     if spec.slice_param
@@ -234,8 +410,8 @@ class ExecutionPlanner:
             else {}
         )
         return [
-            TaskInvocation(
-                job_name=spec.job_name,
+            self._invocation(
+                spec,
                 sql_path=sql_path or spec.sql_path,
                 params=params,
                 full_refresh=True,
@@ -463,16 +639,11 @@ class ExecutionPlanner:
         self,
         slice_values: list[str],
     ) -> dict[str, str]:
+        parameter_names = self._full_refresh_window_param_names()
         raw_window = self.warehouse_execution.get("full_refresh_window")
         if not isinstance(raw_window, dict) or not slice_values:
             return {}
-        start_param = str(raw_window.get("start_param") or "").strip()
-        end_param = str(raw_window.get("end_param") or "").strip()
-        if not start_param or not end_param:
-            raise ExecutionConfigError(
-                "warehouse execution.full_refresh_window requires "
-                "start_param and end_param"
-            )
+        start_param, end_param = parameter_names
         normalized = self._normalize_slice_values(
             [str(value) for value in slice_values],
             "D",
@@ -494,6 +665,24 @@ class ExecutionPlanner:
             start_param: ordered[0],
             end_param: ordered[-1],
         }
+
+    def _full_refresh_window_param_names(self) -> tuple[str, ...]:
+        raw_window = self.warehouse_execution.get("full_refresh_window")
+        if not isinstance(raw_window, dict):
+            return ()
+        start_param = str(raw_window.get("start_param") or "").strip()
+        end_param = str(raw_window.get("end_param") or "").strip()
+        if not start_param or not end_param:
+            raise ExecutionConfigError(
+                "warehouse execution.full_refresh_window requires "
+                "start_param and end_param"
+            )
+        if start_param == end_param:
+            raise ExecutionConfigError(
+                "warehouse execution.full_refresh_window start_param and "
+                "end_param must be different"
+            )
+        return start_param, end_param
 
 
 def _normalize_slice_value(value: str, period: str | None) -> str:

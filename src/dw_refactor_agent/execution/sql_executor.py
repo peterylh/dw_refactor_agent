@@ -41,7 +41,11 @@ class DirectSqlExecutor:
     def execute(self, invocation: TaskInvocation) -> None:
         if self.before_execute is not None:
             self.before_execute(invocation)
-        sql_text = Path(invocation.sql_path).read_text(encoding=TEXT_ENCODING)
+        sql_text = invocation.resolved_sql
+        if sql_text is None:
+            sql_text = Path(invocation.sql_path).read_text(
+                encoding=TEXT_ENCODING
+            )
         full_sql = render_invocation_sql(invocation, sql_text)
         result = subprocess.run(
             self.mysql_cmd + [self.db_name],
@@ -72,7 +76,11 @@ class ShadowSqlExecutor:
         self.run_sql_text = run_sql_text
 
     def render(self, invocation: TaskInvocation) -> str:
-        sql_text = Path(invocation.sql_path).read_text(encoding=TEXT_ENCODING)
+        sql_text = invocation.resolved_sql
+        if sql_text is None:
+            sql_text = Path(invocation.sql_path).read_text(
+                encoding=TEXT_ENCODING
+            )
         context = replace(
             self.context,
             qa_ready_tables=set(self.qa_ready_tables),

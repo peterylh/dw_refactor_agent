@@ -73,6 +73,11 @@ class RenderedTask:
     binding_digest: str
     render_digest: str
     public_bindings: Mapping[str, object]
+    resolved_bindings: Mapping[str, object] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
 
     def normalized_summary(self) -> dict:
         return {
@@ -368,6 +373,7 @@ def render_task(
         binding_digest=binding_digest,
         render_digest=render_digest,
         public_bindings=public_bindings,
+        resolved_bindings=dict(values),
     )
 
 

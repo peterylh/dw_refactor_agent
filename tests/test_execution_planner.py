@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import date
 
 import pytest
+import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.execution import task_run
 from dw_refactor_agent.execution.invocation import TaskInvocation
 from dw_refactor_agent.execution.planner import (
     ExecutionConfigError,
     ExecutionPlanner,
 )
+from dw_refactor_agent.execution.sql_executor import DirectSqlExecutor
 
 
 def _write_demo_project(
@@ -111,6 +115,473 @@ def _rename_execution_model(
         ddl_text,
         encoding="utf-8",
     )
+
+
+def _write_template_task(
+    monkeypatch,
+    tmp_path,
+    *,
+    slice_parameter="etl_date",
+    startup_prop="etl_date",
+    startup_sensitive=False,
+):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config="execution:\n  materialized: incremental\n",
+    )
+    sql_path.write_text(
+        "INSERT INTO ${cdm_schema}.${run_table}\n"
+        f"SELECT ${{{startup_prop}}}, ${{previous_day}}, ${{next_day}}, "
+        "${previous_year_end};\n",
+        encoding="utf-8",
+    )
+    contract = {
+        "version": 1,
+        "strict": True,
+        "startup_params": [
+            {
+                "prop": startup_prop,
+                "type": "DATE",
+                "source": "invocation.etl_date",
+                "required": True,
+                "sensitive": startup_sensitive,
+            }
+        ],
+        "project_params": [
+            {
+                "prop": "cdm_schema",
+                "type": "IDENTIFIER",
+                "source": "project.cdm_schema",
+                "required": True,
+            }
+        ],
+        "local_params": [
+            {
+                "prop": "previous_day",
+                "direct": "IN",
+                "type": "DATE",
+                "value": {
+                    "derive": {
+                        "from": startup_prop,
+                        "operation": "add_days",
+                        "amount": -1,
+                    }
+                },
+            },
+            {
+                "prop": "next_day",
+                "direct": "IN",
+                "type": "DATE",
+                "value": {
+                    "derive": {
+                        "from": startup_prop,
+                        "operation": "add_days",
+                        "amount": 1,
+                    }
+                },
+            },
+            {
+                "prop": "previous_year_end",
+                "direct": "IN",
+                "type": "DATE",
+                "value": {
+                    "derive": {
+                        "from": startup_prop,
+                        "operation": "previous_year_end",
+                    }
+                },
+            },
+            {
+                "prop": "run_table",
+                "direct": "IN",
+                "type": "IDENTIFIER",
+                "value": {
+                    "derive": {
+                        "from": startup_prop,
+                        "operation": "format_date",
+                        "format": "yyyyMMdd",
+                        "prefix": "tmp_orders_",
+                    }
+                },
+            },
+        ],
+        "usage": {
+            "slices": [{"prop": startup_prop, "parameter": slice_parameter}],
+            "dynamic_relations": [
+                {"prop": "run_table", "lifecycle": "invocation"}
+            ],
+        },
+    }
+    sql_path.with_suffix(".yaml").write_text(
+        yaml.safe_dump(contract, sort_keys=False),
+        encoding="utf-8",
+    )
+    config.core.PROJECT_CONFIG["demo"]["task_templates"] = {
+        "version": 1,
+        "analysis": {
+            "startup": {"etl_date": "2000-02-29"},
+            "project": {"cdm_schema": "analysis_dm"},
+        },
+        "bindings": {
+            "prod": {"project": {"cdm_schema": "prod_dm"}},
+            "test": {"project": {"cdm_schema": "test_dm"}},
+        },
+    }
+    return sql_path
+
+
+def _write_companion_template(companion_path, *, declare_slice=False):
+    companion_path.write_text(
+        "SELECT ${etl_start_date}, ${etl_end_date};\n",
+        encoding="utf-8",
+    )
+    contract = {
+        "version": 1,
+        "strict": True,
+        "startup_params": [
+            {
+                "prop": prop,
+                "type": "DATE",
+                "source": f"invocation.{prop}",
+                "required": True,
+            }
+            for prop in ("etl_start_date", "etl_end_date")
+        ],
+        "usage": {
+            "partitions": [
+                {"prop": prop, "parameter": prop}
+                for prop in ("etl_start_date", "etl_end_date")
+            ]
+        },
+    }
+    if declare_slice:
+        contract["usage"]["slices"] = [
+            {"prop": "etl_start_date", "parameter": "etl_start_date"}
+        ]
+    companion_path.with_suffix(".yaml").write_text(
+        yaml.safe_dump(contract, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+def test_template_invocations_render_typed_dates_and_dynamic_names(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path = _write_template_task(monkeypatch, tmp_path)
+    planner = ExecutionPlanner("demo", db_env="prod")
+    spec = planner.task_spec("dwd_orders", sql_path)
+
+    invocations = planner.plan_regular_run(
+        spec,
+        ["2025-03-01", "2025-03-02"],
+    )
+
+    assert [item.session_params for item in invocations] == [
+        {"etl_date": "2025-03-01"},
+        {"etl_date": "2025-03-02"},
+    ]
+    assert "`prod_dm`.`tmp_orders_20250301`" in invocations[0].resolved_sql
+    assert "'2025-02-28'" in invocations[0].resolved_sql
+    assert "'2025-03-02'" in invocations[0].resolved_sql
+    assert "'2024-12-31'" in invocations[0].resolved_sql
+    assert "`tmp_orders_20250302`" in invocations[1].resolved_sql
+    assert invocations[0].render_inputs["etl_date"] == date(2025, 3, 1)
+    assert invocations[0].render_inputs["previous_day"] == date(2025, 2, 28)
+    assert invocations[0].render_inputs["run_table"] == "tmp_orders_20250301"
+
+
+def test_direct_executor_injects_legacy_session_params_after_template_render(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path = _write_template_task(monkeypatch, tmp_path)
+    planner = ExecutionPlanner("demo")
+    invocation = planner.plan_regular_run(
+        planner.task_spec("dwd_orders", sql_path),
+        ["2025-03-01"],
+    )[0]
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(kwargs["input"])
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.execution.sql_executor.subprocess.run",
+        fake_run,
+    )
+    DirectSqlExecutor(["mysql"], "demo_dm").execute(invocation)
+
+    assert calls[0].startswith(
+        "SET @etl_date = '2025-03-01';\nSET @full_refresh = 0;\n"
+    )
+    assert "${" not in calls[0]
+    assert "`prod_dm`.`tmp_orders_20250301`" in calls[0]
+
+
+def test_legacy_invocation_sql_bytes_remain_unchanged(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config="execution:\n  materialized: incremental\n",
+    )
+    legacy_sql = sql_path.read_text(encoding="utf-8")
+    planner = ExecutionPlanner("demo")
+    invocation = planner.plan_regular_run(
+        planner.task_spec("dwd_orders", sql_path),
+        ["2025-03-01"],
+    )[0]
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(kwargs["input"])
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.execution.sql_executor.subprocess.run",
+        fake_run,
+    )
+    DirectSqlExecutor(["mysql"], "demo_dm").execute(invocation)
+
+    assert invocation.resolved_sql is None
+    assert invocation.render_inputs == {}
+    assert calls == [
+        f"SET @etl_date = '2025-03-01';\nSET @full_refresh = 0;\n{legacy_sql}"
+    ]
+
+
+def test_execution_plan_validation_dry_renders_without_database_calls(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path = _write_template_task(monkeypatch, tmp_path)
+    planner = ExecutionPlanner("demo")
+    database_calls = []
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.execution.sql_executor.subprocess.run",
+        lambda *args, **kwargs: database_calls.append((args, kwargs)),
+    )
+
+    count = task_run._validate_execution_plan(
+        ["dwd_orders"],
+        {"dwd_orders": sql_path},
+        planner,
+        ["2025-03-01", "2025-03-02"],
+        full_refresh=False,
+    )
+
+    assert count == 2
+    assert database_calls == []
+
+
+def test_template_execution_uses_selected_database_environment(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path = _write_template_task(monkeypatch, tmp_path)
+    planner = ExecutionPlanner("demo", db_env="test")
+
+    invocation = planner.plan_regular_run(
+        planner.task_spec("dwd_orders", sql_path),
+        ["2025-03-01"],
+    )[0]
+
+    assert "`test_dm`.`tmp_orders_20250301`" in invocation.resolved_sql
+    assert "prod_dm" not in invocation.resolved_sql
+
+
+def test_template_execution_requires_selected_environment_binding(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path = _write_template_task(monkeypatch, tmp_path)
+    planner = ExecutionPlanner("demo", db_env="qa")
+    spec = planner.task_spec("dwd_orders", sql_path)
+
+    with pytest.raises(ExecutionConfigError, match="missing execution"):
+        planner.plan_regular_run(spec, ["2025-03-01"])
+
+
+def test_scheduler_etl_date_binds_yaml_internal_startup_name(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path = _write_template_task(
+        monkeypatch,
+        tmp_path,
+        startup_prop="business_date",
+    )
+    planner = ExecutionPlanner("demo")
+
+    invocation = planner.plan_regular_run(
+        planner.task_spec("dwd_orders", sql_path),
+        ["2025-03-01"],
+    )[0]
+
+    assert invocation.session_params == {"etl_date": "2025-03-01"}
+    assert invocation.render_inputs["business_date"] == date(2025, 3, 1)
+    assert "'2025-03-01'" in invocation.resolved_sql
+
+
+def test_sensitive_template_inputs_are_redacted_from_public_invocation(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path = _write_template_task(
+        monkeypatch,
+        tmp_path,
+        startup_sensitive=True,
+    )
+    planner = ExecutionPlanner("demo")
+
+    invocation = planner.plan_regular_run(
+        planner.task_spec("dwd_orders", sql_path),
+        ["2025-03-01"],
+    )[0]
+
+    assert invocation.public_session_params == {"etl_date": "<redacted>"}
+    assert "2025-03-01" not in repr(invocation)
+    assert invocation.public_summary["public_bindings"]["etl_date"] == (
+        "<redacted>"
+    )
+
+
+def test_execution_override_cannot_replace_scheduler_slice_dependency(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path = _write_template_task(monkeypatch, tmp_path)
+    contract_path = sql_path.with_suffix(".yaml")
+    contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+    contract["startup_params"][0]["overrideable"] = True
+    contract_path.write_text(
+        yaml.safe_dump(contract, sort_keys=False),
+        encoding="utf-8",
+    )
+    config.core.PROJECT_CONFIG["demo"]["task_templates"]["bindings"]["prod"][
+        "overrides"
+    ] = {"etl_date": "1999-01-01"}
+    planner = ExecutionPlanner("demo")
+    spec = planner.task_spec("dwd_orders", sql_path)
+
+    with pytest.raises(ExecutionConfigError, match="protected_override"):
+        planner.plan_regular_run(spec, ["2025-03-01"])
+
+
+def test_companion_template_uses_only_full_refresh_window_parameters(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path, companion_path = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  full_refresh_strategy: companion\n"
+        ),
+        warehouse_execution=(
+            "execution:\n"
+            "  default_slice:\n"
+            "    param: etl_date\n"
+            "    column: stat_date\n"
+            "    period: D\n"
+            "  full_refresh_window:\n"
+            "    start_param: etl_start_date\n"
+            "    end_param: etl_end_date\n"
+        ),
+        companion=True,
+    )
+    _write_companion_template(companion_path)
+    planner = ExecutionPlanner("demo")
+
+    invocation = planner.plan_full_refresh(
+        planner.task_spec("dwd_orders", sql_path),
+        ["2025-03-01", "2025-03-02"],
+    )[0]
+
+    assert invocation.session_params == {
+        "etl_start_date": "2025-03-01",
+        "etl_end_date": "2025-03-02",
+    }
+    assert "'2025-03-01', '2025-03-02'" in invocation.resolved_sql
+
+
+def test_companion_template_rejects_per_slice_usage(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path, companion_path = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  full_refresh_strategy: companion\n"
+        ),
+        warehouse_execution=(
+            "execution:\n"
+            "  default_slice:\n"
+            "    param: etl_date\n"
+            "    column: stat_date\n"
+            "    period: D\n"
+            "  full_refresh_window:\n"
+            "    start_param: etl_start_date\n"
+            "    end_param: etl_end_date\n"
+        ),
+        companion=True,
+    )
+    _write_companion_template(companion_path, declare_slice=True)
+    planner = ExecutionPlanner("demo")
+
+    with pytest.raises(ExecutionConfigError, match="usage.slices"):
+        planner.task_spec("dwd_orders", sql_path)
+
+
+@pytest.mark.parametrize(
+    ("etl_date", "schema", "message"),
+    [
+        ("2025-02-30", "prod_dm", "does not match"),
+        ("2025-03-01", "unsafe-name", "safe identifier"),
+    ],
+)
+def test_template_execution_fails_closed_on_invalid_inputs(
+    monkeypatch,
+    tmp_path,
+    etl_date,
+    schema,
+    message,
+):
+    sql_path = _write_template_task(monkeypatch, tmp_path)
+    config.core.PROJECT_CONFIG["demo"]["task_templates"]["bindings"]["prod"][
+        "project"
+    ]["cdm_schema"] = schema
+    planner = ExecutionPlanner("demo")
+    spec = planner.task_spec("dwd_orders", sql_path)
+
+    with pytest.raises(ExecutionConfigError, match=message):
+        planner.plan_regular_run(spec, [etl_date])
+
+
+def test_template_slice_usage_must_match_model_execution_contract(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path = _write_template_task(
+        monkeypatch,
+        tmp_path,
+        slice_parameter="other_date",
+    )
+    planner = ExecutionPlanner("demo")
+
+    with pytest.raises(ExecutionConfigError, match="must match"):
+        planner.task_spec("dwd_orders", sql_path)
 
 
 def test_task_spec_validates_slice_against_model_name_ddl(

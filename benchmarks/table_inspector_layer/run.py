@@ -315,6 +315,45 @@ def replace_table_refs(
     return text
 
 
+def _rewrite_template_value(
+    value: Any,
+    table_mapping: Dict[str, str],
+    database_mapping: Dict[str, str],
+) -> Any:
+    """Rewrite identifiers in task contracts and project template profiles."""
+    if isinstance(value, str):
+        return replace_table_refs(
+            value,
+            table_mapping,
+            database_mapping=database_mapping,
+        )
+    if isinstance(value, list):
+        return [
+            _rewrite_template_value(item, table_mapping, database_mapping)
+            for item in value
+        ]
+    if isinstance(value, dict):
+        rewritten = {}
+        for key, item in value.items():
+            rewritten_key = _rewrite_template_value(
+                key,
+                table_mapping,
+                database_mapping,
+            )
+            if rewritten_key in rewritten:
+                raise ValueError(
+                    "template identifier rewrite produced a duplicate key: "
+                    f"{rewritten_key!r}"
+                )
+            rewritten[rewritten_key] = _rewrite_template_value(
+                item,
+                table_mapping,
+                database_mapping,
+            )
+        return rewritten
+    return value
+
+
 def sanitize_text(text: str) -> str:
     return LAYER_WORD_PATTERN.sub("", text)
 
@@ -392,6 +431,8 @@ def _write_target_warehouse_yaml(
     target_dir: Path,
     target_project: str,
     database: str,
+    table_mapping: Dict[str, str],
+    database_mapping: Dict[str, str],
 ) -> None:
     source = _load_yaml_mapping(source_dir / "warehouse.yaml")
     catalog = str(source.get("catalog") or CATALOG)
@@ -410,6 +451,12 @@ def _write_target_warehouse_yaml(
     }
     if isinstance(source.get("verification"), dict):
         payload["verification"] = source["verification"]
+    if isinstance(source.get("task_templates"), dict):
+        payload["task_templates"] = _rewrite_template_value(
+            source["task_templates"],
+            table_mapping,
+            database_mapping,
+        )
     _write_yaml(target_dir / "warehouse.yaml", payload)
 
 
@@ -450,9 +497,16 @@ def _copy_required_project_files(
     target_dir: Path,
     target_project: str,
     database: str,
+    table_mapping: Dict[str, str],
+    database_mapping: Dict[str, str],
 ) -> None:
     _write_target_warehouse_yaml(
-        source_dir, target_dir, target_project, database
+        source_dir,
+        target_dir,
+        target_project,
+        database,
+        table_mapping,
+        database_mapping,
     )
     _write_target_taxonomy(source_dir, target_dir, target_project)
     naming_config = source_dir / "naming_config.yaml"
@@ -548,6 +602,28 @@ def _copy_rewritten_tasks(
             ),
             encoding="utf-8",
         )
+        contract_paths = [
+            path
+            for path in (
+                task_path.with_suffix(".yaml"),
+                task_path.with_suffix(".yml"),
+            )
+            if path.is_file()
+        ]
+        if len(contract_paths) > 1:
+            raise ValueError(
+                f"task SQL has multiple YAML contracts: {task_path}"
+            )
+        if contract_paths:
+            contract = _load_yaml_mapping(contract_paths[0])
+            _write_yaml(
+                output_dir / f"{new_stem}{contract_paths[0].suffix}",
+                _rewrite_template_value(
+                    contract,
+                    table_mapping,
+                    database_mapping,
+                ),
+            )
 
 
 def build_temp_project(
@@ -578,7 +654,12 @@ def build_temp_project(
     database_mapping = {_source_database(source_dir, source_project): database}
 
     _copy_required_project_files(
-        source_dir, target_dir, target_project, database
+        source_dir,
+        target_dir,
+        target_project,
+        database,
+        mapping,
+        database_mapping,
     )
     _copy_rewritten_ddl(
         source_dir,
@@ -665,6 +746,9 @@ def _write_extracted_lineage(
     parallelism: int,
 ) -> None:
     from dw_refactor_agent.lineage import lineage_extractor
+    from dw_refactor_agent.sql.task_analysis import (
+        resolve_project_tasks_analysis,
+    )
 
     runtime_config, _ = _runtime_modules()
     project = temp_project.target_project
@@ -672,7 +756,14 @@ def _write_extracted_lineage(
     try:
         lineage_extractor.configure_project(project)
         schema = lineage_extractor.build_schema_from_project_ddl(project)
-        task_files = lineage_extractor.iter_project_task_files(project)
+        resolved_tasks = resolve_project_tasks_analysis(
+            project,
+            include_full_refresh=False,
+        )
+        task_files = [asset.sql_path for asset, _sql in resolved_tasks]
+        analysis_sql_by_path = {
+            asset.sql_path: sql for asset, sql in resolved_tasks
+        }
         extraction = lineage_extractor.extract_lineage_from_task_files(
             task_files,
             temp_project.target_dir,
@@ -681,6 +772,7 @@ def _write_extracted_lineage(
             source_file_for_path=lambda path: (
                 lineage_extractor.task_source_file(project, path)
             ),
+            task_sql_resolver=lambda path: analysis_sql_by_path[Path(path)],
         )
         fatal_diagnostics = lineage_extractor._fatal_diagnostics(
             extraction["errors"]
