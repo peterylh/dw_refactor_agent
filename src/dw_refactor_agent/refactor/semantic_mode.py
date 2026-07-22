@@ -12,13 +12,24 @@ import yaml
 from sqlglot import exp
 from sqlglot.errors import ParseError
 
+import dw_refactor_agent.config as config
 from dw_refactor_agent.config import TEXT_ENCODING
+from dw_refactor_agent.config.assets import ProjectTaskAsset
 from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     normalize_schema_id,
     parse_create_table,
 )
 from dw_refactor_agent.lineage.asset_graph import build_asset_table_graph
+from dw_refactor_agent.lineage.identifiers import table_identity_match_key
 from dw_refactor_agent.refactor.artifact_contract import sha256_json
+from dw_refactor_agent.sql.task_analysis import (
+    TaskAnalysisProfile,
+    resolve_task_analysis_sql,
+    task_analysis_profile,
+)
+from dw_refactor_agent.sql.task_template import (
+    build_task_definition_from_yaml,
+)
 
 VALID_SEMANTIC_MODES = frozenset(("equivalent", "changed", "unknown"))
 SEMANTIC_ASSET_KINDS = (
@@ -27,6 +38,10 @@ SEMANTIC_ASSET_KINDS = (
     "full_refresh_task",
     "model",
 )
+_TASK_CONTRACT_KINDS = {
+    "task": "task_contract",
+    "full_refresh_task": "full_refresh_task_contract",
+}
 
 
 @dataclass(frozen=True)
@@ -495,6 +510,57 @@ def _optional_sql_equivalent(
     return sql_ast_equivalent(baseline_sql, current_sql, rename_mapping)
 
 
+def _task_semantic_value(value) -> dict | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {
+            "kind": "legacy",
+            "analysis_sql": value,
+            "normalized_contract": None,
+        }
+    if not isinstance(value, dict):
+        return None
+    if value.get("kind") not in {"legacy", "template"}:
+        return None
+    if not isinstance(value.get("analysis_sql"), str):
+        return None
+    return value
+
+
+def _task_semantically_equivalent(
+    baseline,
+    current,
+    identity: dict,
+) -> bool:
+    baseline_task = _task_semantic_value(baseline)
+    current_task = _task_semantic_value(current)
+    if baseline_task is None or current_task is None:
+        return baseline_task is None and current_task is None
+    if baseline_task["kind"] != current_task["kind"]:
+        # One fixed analysis binding cannot prove a legacy-to-template
+        # migration equivalent for every scheduler invocation.
+        return False
+    if (
+        baseline_task.get("normalized_contract")
+        != current_task.get("normalized_contract")
+    ):
+        return False
+    baseline_sql = baseline_task["analysis_sql"]
+    current_sql = current_task["analysis_sql"]
+    if not _task_rename_usage_is_unambiguous(
+        baseline_sql,
+        current_sql,
+        identity,
+    ):
+        return False
+    return _optional_sql_equivalent(
+        baseline_sql,
+        current_sql,
+        identity["rename_mapping"],
+    )
+
+
 def automatic_equivalence(
     baseline_assets: dict,
     current_assets: dict,
@@ -513,16 +579,10 @@ def automatic_equivalence(
     ):
         return None, [], identity
     for asset_kind in ("task", "full_refresh_task"):
-        if not _task_rename_usage_is_unambiguous(
+        if not _task_semantically_equivalent(
             baseline_assets.get(asset_kind),
             current_assets.get(asset_kind),
             identity,
-        ):
-            return None, [], identity
-        if not _optional_sql_equivalent(
-            baseline_assets.get(asset_kind),
-            current_assets.get(asset_kind),
-            rename_mapping,
         ):
             return None, [], identity
 
@@ -871,6 +931,49 @@ def _git_output(repo_root: Path, *args: str, text: bool):
     ).stdout
 
 
+def _task_profile_from_warehouse(content: bytes | None) -> TaskAnalysisProfile:
+    if content is None:
+        return task_analysis_profile({})
+    try:
+        raw = yaml.safe_load(content.decode(TEXT_ENCODING))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ValueError("warehouse.yaml is not valid UTF-8 YAML") from exc
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("warehouse.yaml must be a mapping")
+    return task_analysis_profile(
+        {"task_templates": raw.get("task_templates") or {}}
+    )
+
+
+def _baseline_task_profile(
+    repo_root: Path,
+    project_dir: str,
+    base_ref: str,
+) -> TaskAnalysisProfile:
+    relative_path = f"{str(project_dir).rstrip('/')}/warehouse.yaml"
+    result = subprocess.run(
+        ["git", "show", f"{base_ref}:{relative_path}"],
+        cwd=str(repo_root),
+        check=False,
+        capture_output=True,
+    )
+    return _task_profile_from_warehouse(
+        result.stdout if result.returncode == 0 else None
+    )
+
+
+def _current_task_profile(
+    repo_root: Path,
+    project_dir: str,
+) -> TaskAnalysisProfile:
+    warehouse_path = repo_root / project_dir / "warehouse.yaml"
+    return _task_profile_from_warehouse(
+        warehouse_path.read_bytes() if warehouse_path.is_file() else None
+    )
+
+
 def _baseline_asset_files(
     repo_root: Path, project_dir: str, base_ref: str
 ) -> dict[str, bytes]:
@@ -941,6 +1044,18 @@ def _asset_path_classification(
             is_full_refresh = True
         kind = "full_refresh_task" if is_full_refresh else "task"
         return kind, table_name
+    if asset_group == "tasks" and suffix in {".yaml", ".yml"}:
+        table_name = path.stem
+        is_full_refresh = "full_refresh" in parts[2:-1]
+        if table_name.endswith("_full_refresh"):
+            table_name = table_name[: -len("_full_refresh")]
+            is_full_refresh = True
+        kind = (
+            "full_refresh_task_contract"
+            if is_full_refresh
+            else "task_contract"
+        )
+        return kind, table_name
     if asset_group == "models" and suffix in {".yaml", ".yml"}:
         return "model", path.stem
     return None
@@ -990,10 +1105,94 @@ def _table_id_by_name(index: dict) -> dict[str, str]:
     return result
 
 
-def _assets_as_text(index: dict, table_name: str | None) -> dict:
+def _task_semantic_asset(
+    index: dict,
+    table_name: str | None,
+    task_kind: str,
+    *,
+    project: str,
+    profile: TaskAnalysisProfile,
+) -> dict | None:
+    table_assets = index.get(table_name, {}) if table_name else {}
+    sql_asset = table_assets.get(task_kind)
+    contract_asset = table_assets.get(_TASK_CONTRACT_KINDS[task_kind])
+    if sql_asset is None:
+        if contract_asset is not None:
+            raise ValueError(
+                f"task contract has no paired SQL: {contract_asset.path}"
+            )
+        return None
+    try:
+        sql_text = sql_asset.text()
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"task SQL is not valid UTF-8: {sql_asset.path}") from exc
+
+    definition = None
+    normalized_contract = None
+    if contract_asset is not None:
+        try:
+            contract_text = contract_asset.text()
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f"task contract is not valid UTF-8: {contract_asset.path}"
+            ) from exc
+        definition = build_task_definition_from_yaml(
+            sql_text,
+            contract_text,
+            sql_path=Path(sql_asset.path),
+            contract_path=Path(contract_asset.path),
+        )
+        normalized_contract = definition.contract.as_dict()
+    elif "${" in sql_text:
+        raise ValueError(
+            f"template task SQL has no paired contract: {sql_asset.path}"
+        )
+
+    path = Path(sql_asset.path)
+    asset = ProjectTaskAsset(
+        project=project,
+        role="ads" if "ads" in path.parts else "mid",
+        sql_path=path,
+        source_file=path.as_posix(),
+        sql_text=sql_text,
+        contract_path=(
+            Path(contract_asset.path) if contract_asset is not None else None
+        ),
+        template_definition=definition,
+        is_full_refresh=task_kind == "full_refresh_task",
+    )
+    analysis = resolve_task_analysis_sql(
+        asset,
+        {},
+        profile=profile,
+    )
+    return {
+        "kind": "template" if definition is not None else "legacy",
+        "analysis_sql": analysis.sql,
+        "normalized_contract": normalized_contract,
+    }
+
+
+def _assets_as_text(
+    index: dict,
+    table_name: str | None,
+    *,
+    project: str,
+    profile: TaskAnalysisProfile,
+    task_name: str | None = None,
+) -> dict:
     table_assets = index.get(table_name, {}) if table_name else {}
     result = {}
     for kind in SEMANTIC_ASSET_KINDS:
+        if kind in _TASK_CONTRACT_KINDS:
+            result[kind] = _task_semantic_asset(
+                index,
+                task_name or table_name,
+                kind,
+                project=project,
+                profile=profile,
+            )
+            continue
         asset = table_assets.get(kind)
         if asset is None:
             result[kind] = None
@@ -1005,10 +1204,57 @@ def _assets_as_text(index: dict, table_name: str | None) -> dict:
     return result
 
 
-def _assets_for_fingerprint(index: dict, table_name: str | None) -> dict:
+def _normalized_analysis_sql(sql_text: str) -> dict:
+    try:
+        statements = sqlglot.parse(sql_text, dialect="doris")
+    except (ParseError, AttributeError, TypeError, ValueError):
+        return {
+            "parseable": False,
+            "content_sha256": (
+                "sha256:" + hashlib.sha256(sql_text.encode("utf-8")).hexdigest()
+            ),
+        }
+    return {
+        "parseable": True,
+        "statements": [
+            statement.sql(dialect="doris", pretty=False)
+            for statement in statements
+        ],
+    }
+
+
+def _task_fingerprint_value(task: dict | None):
+    if task is None:
+        return None
+    return {
+        "kind": task["kind"],
+        "normalized_contract": task.get("normalized_contract"),
+        "analysis_sql": _normalized_analysis_sql(task["analysis_sql"]),
+    }
+
+
+def _assets_for_fingerprint(
+    index: dict,
+    table_name: str | None,
+    *,
+    project: str,
+    profile: TaskAnalysisProfile,
+    task_name: str | None = None,
+) -> dict:
     table_assets = index.get(table_name, {}) if table_name else {}
     result = {"logical_name": table_name}
     for kind in SEMANTIC_ASSET_KINDS:
+        if kind in _TASK_CONTRACT_KINDS:
+            result[kind] = _task_fingerprint_value(
+                _task_semantic_asset(
+                    index,
+                    task_name or table_name,
+                    kind,
+                    project=project,
+                    profile=profile,
+                )
+            )
+            continue
         asset = table_assets.get(kind)
         result[kind] = asset.descriptor() if asset is not None else None
     return result
@@ -1029,6 +1275,82 @@ def _direct_table_keys(change_analysis: dict) -> set[str]:
     for key in ("ddl_tables", "task_jobs", "model_tables"):
         direct.update(assets.get(key) or [])
     return {str(name).casefold() for name in direct}
+
+
+def _semantic_table_key(project: str, table_name: str) -> tuple:
+    project_config = config.PROJECT_CONFIG.get(project) or {}
+    return table_identity_match_key(
+        table_name,
+        default_catalog=project_config.get("catalog") or "internal",
+        default_db=project_config.get("db") or "",
+    )
+
+
+def _task_jobs_by_managed_output(
+    project: str,
+    lineage_data: dict,
+) -> dict[tuple, str]:
+    if (lineage_data or {}).get("format_version") != 2:
+        return {}
+    table_types = {}
+    display_by_key = {}
+    for table in lineage_data.get("tables") or []:
+        full_name = str(table.get("full_name") or "").strip()
+        if not full_name:
+            continue
+        key = _semantic_table_key(project, full_name)
+        table_types.setdefault(key, set()).add(table.get("dataset_type"))
+        display_by_key.setdefault(key, full_name)
+    ambiguous_types = {
+        display_by_key[key]: sorted(str(item) for item in types)
+        for key, types in table_types.items()
+        if len(types) != 1
+    }
+    if ambiguous_types:
+        raise ValueError(
+            "lineage table identity has conflicting dataset types: "
+            f"{ambiguous_types!r}"
+        )
+    managed_tables = {
+        key for key, types in table_types.items() if types == {"managed"}
+    }
+    result = {}
+    output_by_key = {}
+    for job in lineage_data.get("jobs") or []:
+        job_name = str(job.get("name") or "").strip()
+        if not job_name:
+            continue
+        managed_outputs = {
+            _semantic_table_key(project, str(output)): str(output)
+            for output in job.get("outputs") or []
+            if _semantic_table_key(project, str(output)) in managed_tables
+        }
+        if len(managed_outputs) != 1:
+            continue
+        key, output = next(iter(managed_outputs.items()))
+        existing = result.get(key)
+        if existing is not None and existing.casefold() != job_name.casefold():
+            raise ValueError(
+                "multiple Jobs resolve to the same managed output "
+                f"{output_by_key[key]!r}/{output!r}: "
+                f"{existing!r}, {job_name!r}"
+            )
+        result[key] = job_name
+        output_by_key[key] = output
+    return result
+
+
+def _task_name_for_table(
+    project: str,
+    jobs_by_output: dict[tuple, str],
+    table_name: str | None,
+) -> str | None:
+    if not table_name:
+        return table_name
+    return jobs_by_output.get(
+        _semantic_table_key(project, table_name),
+        table_name,
+    )
 
 
 def _matched_table_names(
@@ -1071,6 +1393,10 @@ def _semantic_table_facts(
     change_analysis: dict,
     baseline_index: dict,
     current_index: dict,
+    baseline_profile: TaskAnalysisProfile,
+    current_profile: TaskAnalysisProfile,
+    baseline_jobs_by_output: dict[str, str],
+    current_jobs_by_output: dict[str, str],
 ) -> tuple[dict, dict]:
     baseline_ids = _table_id_by_name(baseline_index)
     current_ids = _table_id_by_name(current_index)
@@ -1086,8 +1412,30 @@ def _semantic_table_facts(
             current_ids,
         )
         display_name = current_name or baseline_name or affected_name
-        baseline_assets = _assets_as_text(baseline_index, baseline_name)
-        current_assets = _assets_as_text(current_index, current_name)
+        baseline_task_name = _task_name_for_table(
+            project,
+            baseline_jobs_by_output,
+            baseline_name or affected_name,
+        )
+        current_task_name = _task_name_for_table(
+            project,
+            current_jobs_by_output,
+            current_name or affected_name,
+        )
+        baseline_assets = _assets_as_text(
+            baseline_index,
+            baseline_name,
+            project=project,
+            profile=baseline_profile,
+            task_name=baseline_task_name,
+        )
+        current_assets = _assets_as_text(
+            current_index,
+            current_name,
+            project=project,
+            profile=current_profile,
+            task_name=current_task_name,
+        )
         automatic_mode, evidence, identity = automatic_equivalence(
             baseline_assets, current_assets
         )
@@ -1096,8 +1444,20 @@ def _semantic_table_facts(
             "local_change_fingerprint": local_change_fingerprint(
                 project,
                 table_id,
-                _assets_for_fingerprint(baseline_index, baseline_name),
-                _assets_for_fingerprint(current_index, current_name),
+                _assets_for_fingerprint(
+                    baseline_index,
+                    baseline_name,
+                    project=project,
+                    profile=baseline_profile,
+                    task_name=baseline_task_name,
+                ),
+                _assets_for_fingerprint(
+                    current_index,
+                    current_name,
+                    project=project,
+                    profile=current_profile,
+                    task_name=current_task_name,
+                ),
             ),
             "automatic_mode": automatic_mode,
             "is_direct": str(affected_name).casefold() in direct_keys,
@@ -1169,8 +1529,29 @@ def resolve_semantic_modes(
     current_index = _asset_index(
         _current_asset_files(repo_root, project_dir), project_dir
     )
+    baseline_profile = _baseline_task_profile(
+        repo_root,
+        project_dir,
+        base_ref,
+    )
+    current_profile = _current_task_profile(repo_root, project_dir)
+    baseline_jobs_by_output = _task_jobs_by_managed_output(
+        project,
+        baseline_lineage,
+    )
+    current_jobs_by_output = _task_jobs_by_managed_output(
+        project,
+        current_lineage,
+    )
     facts, baseline_to_current = _semantic_table_facts(
-        project, change_analysis, baseline_index, current_index
+        project,
+        change_analysis,
+        baseline_index,
+        current_index,
+        baseline_profile,
+        current_profile,
+        baseline_jobs_by_output,
+        current_jobs_by_output,
     )
     edges = _affected_edges(
         facts,

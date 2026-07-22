@@ -1,7 +1,9 @@
 import subprocess
 
 import pytest
+import yaml
 
+import dw_refactor_agent.refactor.semantic_mode as semantic_mode_module
 from dw_refactor_agent.refactor.semantic_mode import (
     automatic_equivalence,
     resolve_semantic_graph,
@@ -370,14 +372,72 @@ def _git(root, *args):
     ).stdout.strip()
 
 
-def _write_semantic_table(root, table, ddl, task):
+def _write_semantic_table(root, table, ddl, task, *, task_name=None):
     ddl_path = root / "warehouses/shop/mid/ddl" / f"{table}.sql"
-    task_path = root / "warehouses/shop/mid/tasks" / f"{table}.sql"
+    task_path = (
+        root
+        / "warehouses/shop/mid/tasks"
+        / f"{task_name or table}.sql"
+    )
     ddl_path.parent.mkdir(parents=True, exist_ok=True)
     task_path.parent.mkdir(parents=True, exist_ok=True)
     ddl_path.write_text(ddl, encoding="utf-8")
     task_path.write_text(task, encoding="utf-8")
     return task_path
+
+
+def _date_task_contract(source="invocation.etl_date"):
+    return {
+        "version": 1,
+        "strict": True,
+        "startup_params": [
+            {
+                "prop": "etl_date",
+                "type": "DATE",
+                "source": source,
+                "required": True,
+            }
+        ],
+    }
+
+
+def _template_semantic_project(
+    tmp_path,
+    *,
+    sql,
+    contract=None,
+    task_name=None,
+):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    task_path = _write_semantic_table(
+        tmp_path,
+        "dws_sales",
+        _ddl("dws_sales", "store_id"),
+        sql,
+        task_name=task_name,
+    )
+    warehouse_path = tmp_path / "warehouses/shop/warehouse.yaml"
+    warehouse_path.write_text(
+        """name: shop
+task_templates:
+  version: 1
+  analysis:
+    startup:
+      etl_date: '2025-01-15'
+""",
+        encoding="utf-8",
+    )
+    contract_path = task_path.with_suffix(".yaml")
+    if contract is not None:
+        contract_path.write_text(
+            yaml.safe_dump(contract, sort_keys=False),
+            encoding="utf-8",
+        )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "baseline")
+    return _git(tmp_path, "rev-parse", "HEAD"), task_path, contract_path
 
 
 def _lineage(*edges):
@@ -389,6 +449,27 @@ def _lineage(*edges):
             }
             for source, target in edges
         ]
+    }
+
+
+def _job_lineage(job_name, output_table):
+    return {
+        "format_version": 2,
+        "tables": [
+            {
+                "full_name": output_table,
+                "dataset_type": "managed",
+            }
+        ],
+        "jobs": [
+            {
+                "name": job_name,
+                "source_file": f"mid/tasks/{job_name}.sql",
+                "inputs": [],
+                "outputs": [output_table],
+            }
+        ],
+        "edges": [],
     }
 
 
@@ -465,3 +546,199 @@ def test_resolve_semantic_modes_keeps_filter_change_unknown_to_leaf(tmp_path):
     )
     assert result.selected_tables == ("dws_sales", "ads_sales")
     assert result.boundaries["observational"] == ["ads_sales"]
+
+
+def test_legacy_to_template_migration_stays_unknown_at_fixed_analysis_date(
+    tmp_path,
+):
+    base_ref, task_path, contract_path = _template_semantic_project(
+        tmp_path,
+        sql=(
+            "INSERT INTO dws_sales SELECT store_id FROM ods_store "
+            "WHERE data_dt = '2025-01-15';\n"
+        ),
+    )
+    task_path.write_text(
+        "INSERT INTO dws_sales SELECT store_id FROM ods_store "
+        "WHERE data_dt = ${etl_date};\n",
+        encoding="utf-8",
+    )
+    contract_path.write_text(
+        yaml.safe_dump(_date_task_contract(), sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = resolve_semantic_modes(
+        project="shop",
+        project_dir="warehouses/shop",
+        change_analysis=_change_analysis(["dws_sales"]),
+        baseline_lineage={"edges": []},
+        current_lineage={"edges": []},
+        base_ref=base_ref,
+        repo_root=tmp_path,
+        current_manifest={"verification_intent": {"semantic_modes": {}}},
+        historical_manifests=[],
+    )
+
+    semantics = result.target_semantics["dws_sales"]
+    assert semantics["automatic_mode"] is None
+    assert semantics["resolved_mode"] == "unknown"
+
+
+def test_template_yaml_format_only_change_remains_automatically_equivalent(
+    tmp_path,
+):
+    contract = _date_task_contract()
+    base_ref, _task_path, contract_path = _template_semantic_project(
+        tmp_path,
+        sql=(
+            "INSERT INTO dws_sales SELECT store_id FROM ods_store "
+            "WHERE data_dt = ${etl_date};\n"
+        ),
+        contract=contract,
+    )
+    contract_path.write_text(
+        yaml.safe_dump(contract, sort_keys=True, default_flow_style=True),
+        encoding="utf-8",
+    )
+
+    result = resolve_semantic_modes(
+        project="shop",
+        project_dir="warehouses/shop",
+        change_analysis=_change_analysis(["dws_sales"]),
+        baseline_lineage={"edges": []},
+        current_lineage={"edges": []},
+        base_ref=base_ref,
+        repo_root=tmp_path,
+        current_manifest={"verification_intent": {"semantic_modes": {}}},
+        historical_manifests=[],
+    )
+
+    assert result.target_semantics["dws_sales"]["automatic_mode"] == (
+        "equivalent"
+    )
+
+
+def test_template_contract_semantic_change_is_not_hidden_by_analysis_sql(
+    tmp_path,
+):
+    base_ref, _task_path, contract_path = _template_semantic_project(
+        tmp_path,
+        sql=(
+            "INSERT INTO dws_sales SELECT store_id FROM ods_store "
+            "WHERE data_dt = ${etl_date};\n"
+        ),
+        contract=_date_task_contract(),
+    )
+    contract_path.write_text(
+        yaml.safe_dump(
+            _date_task_contract(source="invocation.run_date"),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = resolve_semantic_modes(
+        project="shop",
+        project_dir="warehouses/shop",
+        change_analysis=_change_analysis(["dws_sales"]),
+        baseline_lineage={"edges": []},
+        current_lineage={"edges": []},
+        base_ref=base_ref,
+        repo_root=tmp_path,
+        current_manifest={"verification_intent": {"semantic_modes": {}}},
+        historical_manifests=[],
+    )
+
+    assert result.target_semantics["dws_sales"]["automatic_mode"] is None
+
+
+def test_task_contract_uses_lineage_job_when_output_name_differs(tmp_path):
+    base_ref, _task_path, contract_path = _template_semantic_project(
+        tmp_path,
+        task_name="prepare_sales",
+        sql=(
+            "INSERT INTO dws_sales SELECT store_id FROM ods_store "
+            "WHERE data_dt = ${etl_date};\n"
+        ),
+        contract=_date_task_contract(),
+    )
+    contract_path.write_text(
+        yaml.safe_dump(
+            _date_task_contract(source="invocation.run_date"),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    lineage = _job_lineage(
+        "prepare_sales",
+        "internal.shop_dm.dws_sales",
+    )
+
+    result = resolve_semantic_modes(
+        project="shop",
+        project_dir="warehouses/shop",
+        change_analysis=_change_analysis(["dws_sales"]),
+        baseline_lineage=lineage,
+        current_lineage=lineage,
+        base_ref=base_ref,
+        repo_root=tmp_path,
+        current_manifest={"verification_intent": {"semantic_modes": {}}},
+        historical_manifests=[],
+    )
+
+    semantics = result.target_semantics["dws_sales"]
+    assert semantics["automatic_mode"] is None
+    assert semantics["resolved_mode"] == "unknown"
+
+
+def test_task_job_output_mapping_uses_runtime_project_database(
+    tmp_path,
+    monkeypatch,
+):
+    base_ref, _task_path, contract_path = _template_semantic_project(
+        tmp_path,
+        task_name="prepare_sales",
+        sql=(
+            "INSERT INTO dws_sales SELECT store_id FROM ods_store "
+            "WHERE data_dt = ${etl_date};\n"
+        ),
+        contract=_date_task_contract(),
+    )
+    contract_path.write_text(
+        yaml.safe_dump(
+            _date_task_contract(source="invocation.run_date"),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        semantic_mode_module.config,
+        "PROJECT_CONFIG",
+        {
+            "dynamic_shop": {
+                "catalog": "internal",
+                "db": "dynamic_shop_dm",
+            }
+        },
+    )
+    lineage = _job_lineage(
+        "prepare_sales",
+        "internal.dynamic_shop_dm.dws_sales",
+    )
+
+    result = resolve_semantic_modes(
+        project="dynamic_shop",
+        project_dir="warehouses/shop",
+        change_analysis=_change_analysis(["dws_sales"]),
+        baseline_lineage=lineage,
+        current_lineage=lineage,
+        base_ref=base_ref,
+        repo_root=tmp_path,
+        current_manifest={"verification_intent": {"semantic_modes": {}}},
+        historical_manifests=[],
+    )
+
+    semantics = result.target_semantics["dws_sales"]
+    assert semantics["automatic_mode"] is None
+    assert semantics["resolved_mode"] == "unknown"

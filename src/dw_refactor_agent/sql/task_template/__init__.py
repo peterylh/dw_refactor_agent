@@ -10,6 +10,7 @@ from .errors import TaskTemplateError, TemplateRenderError
 from .loader import (
     TaskDefinition,
     build_task_definition,
+    build_task_definition_from_yaml,
     load_task_definition,
 )
 from .renderer import (
@@ -35,6 +36,7 @@ __all__ = [
     "TaskTemplateError",
     "TemplateRenderError",
     "build_task_definition",
+    "build_task_definition_from_yaml",
     "load_task_definition",
     "parse_contract",
     "render_task",

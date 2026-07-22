@@ -7,6 +7,7 @@ from pathlib import Path
 
 import dw_refactor_agent.config as config
 from dw_refactor_agent.refactor.artifact_contract import sha256_json
+from dw_refactor_agent.sql.task_template import renderer_semantics_digest
 
 TOOL_SOURCE_DIRECTORIES = (
     "src/dw_refactor_agent/refactor",
@@ -21,8 +22,14 @@ PROJECT_ASSET_PATTERNS = (
     "mid/ddl/**/*.sql",
     "ads/ddl/**/*.sql",
     "ods/tasks/**/*.sql",
+    "ods/tasks/**/*.yaml",
+    "ods/tasks/**/*.yml",
     "mid/tasks/**/*.sql",
+    "mid/tasks/**/*.yaml",
+    "mid/tasks/**/*.yml",
     "ads/tasks/**/*.sql",
+    "ads/tasks/**/*.yaml",
+    "ads/tasks/**/*.yml",
     "ods/models/**/*.yaml",
     "ods/models/**/*.yml",
     "mid/models/**/*.yaml",
@@ -148,8 +155,9 @@ def workspace_fingerprint(root: Path, project: str) -> str:
     """Hash all inputs that can affect analysis or shadow execution."""
     return sha256_json(
         {
-            "fingerprint_version": 2,
+            "fingerprint_version": 3,
             "project": project,
+            "renderer_semantics_digest": renderer_semantics_digest(),
             "files": workspace_file_entries(root, project),
             "runtime_tool_files": runtime_tool_file_entries(),
         }

@@ -18,8 +18,11 @@ def test_classify_changed_assets_groups_project_files():
             "warehouses/shop/ads/ddl/ads_order.sql",
             "warehouses/shop/legacy_tasks/legacy_job.sql",
             "warehouses/shop/mid/tasks/dws_order.sql",
+            "warehouses/shop/mid/tasks/dws_order.yaml",
             "warehouses/shop/mid/tasks/full_refresh/dwd_order_full_refresh.sql",
+            "warehouses/shop/mid/tasks/full_refresh/dwd_order_full_refresh.yml",
             "warehouses/shop/ads/tasks/ads_order.sql",
+            "warehouses/shop/ads/tasks/ads_order.yaml",
             "warehouses/shop/models/dwd_order.yaml",
             "warehouses/shop/mid/models/dwd_inventory.yaml",
             "warehouses/shop/ads/models/ads_order.yaml",
@@ -42,6 +45,57 @@ def test_classify_changed_assets_groups_project_files():
             "warehouses/shop/warehouse.yaml",
         ],
     }
+
+
+def test_task_contract_change_maps_to_same_job_and_downstream_scope():
+    lineage = {
+        "format_version": 2,
+        "tables": [
+            {
+                "full_name": "internal.shop_dm.dws_order",
+                "dataset_type": "managed",
+            },
+            {
+                "full_name": "internal.shop_dm.ads_order",
+                "dataset_type": "managed",
+            },
+        ],
+        "jobs": [
+            {
+                "name": "dws_order",
+                "source_file": "mid/tasks/dws_order.sql",
+                "inputs": [],
+                "outputs": ["internal.shop_dm.dws_order"],
+            }
+        ],
+        "edges": [
+            {
+                "source": {
+                    "type": "column",
+                    "id": "internal.shop_dm.dws_order.id",
+                },
+                "target": {
+                    "type": "column",
+                    "id": "internal.shop_dm.ads_order.id",
+                },
+            }
+        ],
+    }
+
+    result = build_change_analysis(
+        "shop",
+        lineage,
+        lineage,
+        ["warehouses/shop/mid/tasks/dws_order.yaml"],
+    )
+
+    assert result["changed_assets"]["task_jobs"] == ["dws_order"]
+    assert result["affected_scope"]["direct_tables"] == [
+        "internal.shop_dm.dws_order"
+    ]
+    assert result["affected_scope"]["downstream_tables"] == [
+        "internal.shop_dm.ads_order"
+    ]
 
 
 def test_build_change_analysis_marks_warehouse_config_as_global():

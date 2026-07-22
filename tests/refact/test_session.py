@@ -15,6 +15,7 @@ from dw_refactor_agent.refactor.session import (
     run_root_from_manifest_path,
     write_manifest,
 )
+from dw_refactor_agent.sql.task_template import renderer_semantics_digest
 
 
 def _local_datetime(*args):
@@ -71,6 +72,9 @@ def test_create_run_manifest_writes_expected_layout(tmp_path):
         "head": "abc1234",
         "dirty": False,
     }
+    assert manifest["task_renderer_semantics_digest"] == (
+        renderer_semantics_digest()
+    )
     for dirname in ["baseline", "current", "analysis", "verification"]:
         assert (manifest_path.parent / dirname).is_dir()
 

@@ -403,6 +403,31 @@ def build_task_definition(
     )
 
 
+def build_task_definition_from_yaml(
+    sql_text: str,
+    contract_text: str,
+    *,
+    sql_path: Optional[Path] = None,
+    contract_path: Optional[Path] = None,
+) -> TaskDefinition:
+    """Build one definition from SQL and duplicate-safe YAML text."""
+    try:
+        raw = yaml.load(contract_text, Loader=_UniqueKeySafeLoader)
+    except yaml.YAMLError as exc:
+        source = contract_path or "<task-contract>"
+        raise ContractValidationError(
+            f"cannot read task contract {source}: {exc}",
+            code="template.contract.read_failed",
+            path=(str(source),),
+        ) from exc
+    return build_task_definition(
+        sql_text,
+        raw,
+        sql_path=sql_path,
+        contract_path=contract_path,
+    )
+
+
 def load_task_definition(
     sql_path: Path,
     contract_path: Path,
@@ -419,19 +444,16 @@ def load_task_definition(
             path=(str(sql_source),),
         ) from exc
     try:
-        raw = yaml.load(
-            yaml_source.read_text(encoding=TEXT_ENCODING),
-            Loader=_UniqueKeySafeLoader,
-        )
-    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        contract_text = yaml_source.read_text(encoding=TEXT_ENCODING)
+    except (OSError, UnicodeError) as exc:
         raise ContractValidationError(
             f"cannot read task contract {yaml_source}: {exc}",
             code="template.contract.read_failed",
             path=(str(yaml_source),),
         ) from exc
-    return build_task_definition(
+    return build_task_definition_from_yaml(
         sql_text,
-        raw,
+        contract_text,
         sql_path=sql_source,
         contract_path=yaml_source,
     )
@@ -441,6 +463,7 @@ __all__ = [
     "PlaceholderOccurrence",
     "TaskDefinition",
     "build_task_definition",
+    "build_task_definition_from_yaml",
     "canonical_json_bytes",
     "load_task_definition",
     "sha256_bytes",

@@ -1234,6 +1234,23 @@ def test_lightweight_replan_rejects_workspace_change(monkeypatch, tmp_path):
         )
 
 
+@pytest.mark.parametrize("frozen", [None, "sha256:old-renderer"])
+def test_run_rejects_missing_or_changed_renderer_semantics(
+    monkeypatch, frozen
+):
+    monkeypatch.setattr(
+        run_cli,
+        "renderer_semantics_digest",
+        lambda: "sha256:current-renderer",
+    )
+    manifest = {}
+    if frozen is not None:
+        manifest["task_renderer_semantics_digest"] = frozen
+
+    with pytest.raises(StalePlanError, match="stale_run.*new run.*start"):
+        run_cli._require_run_renderer_semantics(manifest)
+
+
 def test_semantic_mode_set_rejects_table_outside_affected_scope(
     tmp_path, monkeypatch
 ):

@@ -120,7 +120,9 @@ def classify_changed_assets(files: list[str], project_dir: str) -> dict:
         parts = rel_path.split("/")
         if path.endswith(".sql") and _is_asset_path(parts, "ddl"):
             ddl_tables.add(Path(path).stem)
-        elif path.endswith(".sql") and _is_asset_path(parts, "tasks"):
+        elif path.endswith((".sql", ".yaml", ".yml")) and _is_asset_path(
+            parts, "tasks"
+        ):
             task_jobs.add(_task_job_name(path))
         elif path.endswith((".yaml", ".yml")) and (
             _is_asset_path(parts, "models")
