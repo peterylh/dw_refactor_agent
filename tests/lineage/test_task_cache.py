@@ -82,7 +82,7 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
     cache_path.write_text(
         json.dumps(
             {
-                "format_version": 3,
+                "format_version": 4,
                 "tasks": [
                     {
                         "source_file": "a.sql",
@@ -135,7 +135,7 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
         "process_table_schemas": [],
     }
     assert cache_entry_from_result(result, "cache-key") == {
-        "format_version": 3,
+        "format_version": 4,
         "cache_key": "cache-key",
         "source_file": "dwd_order.sql",
         "entries": [{"target": "demo_dm.dwd_order"}],

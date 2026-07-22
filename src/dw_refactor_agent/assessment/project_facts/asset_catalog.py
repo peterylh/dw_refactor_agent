@@ -11,11 +11,18 @@ from typing import Any
 
 import yaml
 
-from dw_refactor_agent.config import PROJECT_CONFIG, TEXT_ENCODING
+from dw_refactor_agent.config import (
+    PROJECT_CONFIG,
+    TEXT_ENCODING,
+)
+from dw_refactor_agent.config import (
+    project_dir as configured_project_dir,
+)
 from dw_refactor_agent.ddl_deriver.ddl_deriver import parse_create_table
 from dw_refactor_agent.lineage.sql_task_facts import extract_task_table_facts
 from dw_refactor_agent.lineage.table_graph import _table_from_node
 from dw_refactor_agent.sql.doris import extract_doris_partition_column
+from dw_refactor_agent.sql.task_analysis import resolve_project_tasks_analysis
 
 _MODEL_ROLE_EXPECTED_LAYERS = {
     "ods": ["ODS"],
@@ -384,8 +391,13 @@ def _extract_task_table_facts(
     *,
     default_catalog: str = "internal",
     default_db: str = "",
+    sql_text: str | None = None,
 ) -> dict:
-    text = task_path.read_text(encoding=TEXT_ENCODING)
+    text = (
+        sql_text
+        if sql_text is not None
+        else task_path.read_text(encoding=TEXT_ENCODING)
+    )
     return extract_task_table_facts(
         text,
         source_file,
@@ -521,6 +533,29 @@ def build_asset_catalog(
         return assets[short_name]
 
     task_dirs = _asset_dirs(project_path, "tasks") if project_path else []
+    analysis_sql_by_path = {}
+    configured_project = None
+    if project_path:
+        matching_projects = [
+            project
+            for project in PROJECT_CONFIG
+            if configured_project_dir(project)
+            and configured_project_dir(project).resolve()
+            == project_path.resolve()
+        ]
+        if len(matching_projects) > 1:
+            raise ValueError(
+                f"project directory is configured more than once: "
+                f"{project_path}"
+            )
+        if matching_projects:
+            configured_project = matching_projects[0]
+            analysis_sql_by_path = {
+                asset.sql_path: analysis_sql.sql
+                for asset, analysis_sql in resolve_project_tasks_analysis(
+                    configured_project
+                )
+            }
     task_table_facts_by_path = {}
     transient_targets_by_source_file = defaultdict(set)
     for source_file, names in _transient_targets_from_lineage_tables(
@@ -531,12 +566,13 @@ def build_asset_catalog(
     for task_dir in task_dirs:
         for task_path in sorted(task_dir.rglob("*.sql")):
             relative_source = task_path.relative_to(task_dir).as_posix()
-            project_config = PROJECT_CONFIG.get(project_path.name) or {}
+            project_config = PROJECT_CONFIG.get(configured_project) or {}
             task_facts = _extract_task_table_facts(
                 task_path,
                 relative_source,
                 default_catalog=project_config.get("catalog", "internal"),
                 default_db=project_config.get("db", project_path.name),
+                sql_text=analysis_sql_by_path.get(task_path),
             )
             task_table_facts_by_path[task_path] = task_facts
             for table in task_facts["transient_tables"]:
@@ -689,6 +725,7 @@ def build_asset_catalog(
                         is_full_refresh=(
                             task_path.parent.name == "full_refresh"
                         ),
+                        sql=analysis_sql_by_path.get(task_path, ""),
                     )
                     task_facts.append(fact)
                     linked_names = set(outputs)

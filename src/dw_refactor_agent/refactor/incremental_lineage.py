@@ -5,21 +5,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import dw_refactor_agent.config as config
 from dw_refactor_agent.config import TEXT_ENCODING
 from dw_refactor_agent.lineage import lineage_extractor as extractor
 from dw_refactor_agent.lineage.task_cache import (
+    TASK_CACHE_FORMAT_VERSION,
     cache_entry_from_result,
     load_task_cache,
     stable_json_hash,
 )
+from dw_refactor_agent.sql.task_analysis import resolve_project_tasks_analysis
 
 
-def _task_files(project: str) -> tuple[Path, list[Path]]:
-    cfg = config.PROJECT_CONFIG[project]
-    tasks_dir = config.PROJECT_ROOT / cfg["dir"]
-    task_files = config.iter_project_task_files(project)
-    return tasks_dir, task_files
+def _task_files(project: str) -> list:
+    return resolve_project_tasks_analysis(project)
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -41,7 +39,7 @@ def build_lineage_artifacts(
     """Build lineage output and task cache for a project."""
     extractor.configure_project(project)
     schema = extractor.build_schema_from_project_ddl(project)
-    tasks_dir, task_files = _task_files(project)
+    resolved_tasks = _task_files(project)
     previous_cache = load_task_cache(previous_cache_path)
 
     task_cache_entries = []
@@ -50,13 +48,13 @@ def build_lineage_artifacts(
     computed = 0
     extractor_hash = extractor._extractor_hash_for_cache()
 
-    for index, task_file in enumerate(task_files):
-        source_file = config.task_source_file(project, task_file)
-        sql_text = task_file.read_text(encoding=TEXT_ENCODING)
+    for index, (asset, analysis_sql) in enumerate(resolved_tasks):
+        source_file = asset.source_file
         work_item = extractor.TaskWorkItem(
             index=index,
             source_file=source_file,
-            sql_text=sql_text,
+            sql_text=analysis_sql.sql,
+            analysis_identity=dict(analysis_sql.analysis_identity),
         )
         work_item.sql_hash = extractor._task_sql_hash(work_item)
         cached = previous_cache.get(source_file)
@@ -110,6 +108,7 @@ def build_lineage_artifacts(
         transient_tables=transient_tables,
     )
     cache = {
+        "format_version": TASK_CACHE_FORMAT_VERSION,
         "project": project,
         "schema_hash": stable_json_hash(schema),
         "tasks": sorted(
@@ -125,7 +124,7 @@ def build_lineage_artifacts(
         "lineage": output,
         "cache": cache,
         "summary": {
-            "task_count": len(task_files),
+            "task_count": len(resolved_tasks),
             "computed_task_count": computed,
             "reused_task_count": reused,
             "missing_ddl_tables": sorted(missing_ddl_tables),

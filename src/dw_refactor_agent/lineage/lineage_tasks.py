@@ -94,6 +94,7 @@ class TaskWorkItem:
     sql_text: str
     sql_hash: str = ""
     cache_key: str = ""
+    analysis_identity: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -421,6 +422,7 @@ def _extract_task_work_item(work_item, schema):
                 schema,
                 result["referenced_tables"],
             )
+            result["analysis_identity"] = dict(work_item.analysis_identity)
             return result
 
         context = _task_context_from_statements(
@@ -435,6 +437,7 @@ def _extract_task_work_item(work_item, schema):
             schema,
             result["referenced_tables"],
         )
+        result["analysis_identity"] = dict(work_item.analysis_identity)
         return result
     finally:
         stats.update(previous_stats)
@@ -480,10 +483,16 @@ def _task_failure_result(work_item, error, stage="worker"):
             }
         ],
         "process_table_schemas": [],
+        "analysis_identity": dict(work_item.analysis_identity),
     }
 
 
-def _read_task_work_items(task_files, tasks_dir, source_file_for_path=None):
+def _read_task_work_items(
+    task_files,
+    tasks_dir,
+    source_file_for_path=None,
+    task_sql_resolver=None,
+):
     work_items = []
     for index, task_file in enumerate(task_files):
         task_path = Path(task_file)
@@ -491,13 +500,23 @@ def _read_task_work_items(task_files, tasks_dir, source_file_for_path=None):
             source_file = source_file_for_path(task_path)
         else:
             source_file = task_path.relative_to(tasks_dir).as_posix()
+        resolved = task_sql_resolver(task_path) if task_sql_resolver else None
+        sql_text = (
+            resolved.sql
+            if resolved is not None
+            else task_path.read_text(
+                encoding=_BINDINGS.runtime().TEXT_ENCODING
+            )
+        )
+        analysis_identity = (
+            dict(resolved.analysis_identity) if resolved is not None else {}
+        )
         work_items.append(
             _BINDINGS.runtime().TaskWorkItem(
                 index=index,
                 source_file=source_file,
-                sql_text=task_path.read_text(
-                    encoding=_BINDINGS.runtime().TEXT_ENCODING
-                ),
+                sql_text=sql_text,
+                analysis_identity=analysis_identity,
             )
         )
     return work_items
@@ -528,6 +547,7 @@ def _task_result_from_cache(work_item, cached):
         "schema_slice_hash",
         "extractor_hash",
         "project_config",
+        "analysis_identity",
     ):
         if key in cached:
             result[key] = cached[key]
@@ -563,6 +583,7 @@ def _extractor_hash_for_cache():
             Path(__file__).with_name("lineage_projection.py"),
             Path(__file__).with_name("runtime_binding.py"),
             Path(__file__).with_name("sql_task_facts.py"),
+            Path(__file__).parents[1] / "sql" / "task_analysis.py",
         )
     )
 
@@ -594,6 +615,7 @@ def _cache_can_seed_process_table_schemas(
         cached.get("sql_hash") == sql_hash
         and cached.get("extractor_hash") == extractor_hash
         and cached.get("project_config") == _cache_project_config(project)
+        and cached.get("analysis_identity") == work_item.analysis_identity
     )
 
 
@@ -683,6 +705,7 @@ def _cache_key_from_cached_metadata(
         "schema_slice_hash",
         "extractor_hash",
         "project_config",
+        "analysis_identity",
     )
     if not all(key in cached for key in required_keys):
         return None
@@ -693,6 +716,8 @@ def _cache_key_from_cached_metadata(
     if cached.get("extractor_hash") != extractor_hash:
         return None
     if cached.get("project_config") != _cache_project_config(project):
+        return None
+    if cached.get("analysis_identity") != work_item.analysis_identity:
         return None
 
     referenced_tables = cached.get("referenced_tables") or []
@@ -711,6 +736,7 @@ def _cache_key_from_cached_metadata(
         schema_slice_hash=schema_slice_hash,
         extractor_hash=extractor_hash,
         project_config=_cache_project_config(project),
+        analysis_identity=dict(work_item.analysis_identity),
     )
     return _task_cache_key_from_metadata(
         work_item,
@@ -737,6 +763,7 @@ def _task_cache_metadata_from_context(
         schema_slice_hash=schema_slice_hash,
         extractor_hash=extractor_hash,
         project_config=_cache_project_config(project),
+        analysis_identity=dict(context.work_item.analysis_identity),
     )
 
 
@@ -767,6 +794,7 @@ def _task_cache_metadata_from_result(
         schema_slice_hash=schema_slice_hash,
         extractor_hash=extractor_hash,
         project_config=_cache_project_config(project),
+        analysis_identity=dict(work_item.analysis_identity),
     )
 
 
@@ -789,6 +817,7 @@ def _result_with_cache_metadata(result, metadata):
             "schema_slice_hash": metadata.schema_slice_hash,
             "extractor_hash": metadata.extractor_hash,
             "project_config": metadata.project_config,
+            "analysis_identity": metadata.analysis_identity,
         }
     )
     return cached_result
@@ -996,11 +1025,13 @@ def extract_lineage_from_task_files(
     previous_cache_file=None,
     cache_project=None,
     source_file_for_path=None,
+    task_sql_resolver=None,
 ):
     work_items = _read_task_work_items(
         task_files,
         tasks_dir,
         source_file_for_path=source_file_for_path,
+        task_sql_resolver=task_sql_resolver,
     )
     parallel = max(1, int(parallel or 1))
     cache_enabled = previous_cache_file is not None

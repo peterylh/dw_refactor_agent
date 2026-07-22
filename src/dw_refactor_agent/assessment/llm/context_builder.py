@@ -20,6 +20,7 @@ from dw_refactor_agent.config import (
     task_path_for_job,
 )
 from dw_refactor_agent.lineage.view import LineageView
+from dw_refactor_agent.sql.task_analysis import resolve_project_tasks_analysis
 
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
@@ -563,6 +564,21 @@ def build_contexts(
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     use_project_asset_dirs = ddl_dir is None
     use_project_task_dirs = tasks_dir is None
+    analysis_sql_by_path = (
+        {
+            asset.sql_path: analysis_sql.sql
+            for asset, analysis_sql in resolve_project_tasks_analysis(project)
+        }
+        if use_project_task_dirs
+        else {}
+    )
+
+    def task_sql_text(task_path: Path | None) -> str:
+        if not task_path or not task_path.exists():
+            return ""
+        if use_project_task_dirs:
+            return analysis_sql_by_path.get(task_path, "")
+        return task_path.read_text(encoding=TEXT_ENCODING)
 
     lineage_view = LineageView.from_data(project, lineage_data)
     upstream, downstream = lineage_view.asset_table_graph()
@@ -661,11 +677,7 @@ def build_contexts(
                 f"{model_table_name}.sql",
             )
         )
-        sql_text = (
-            task_path.read_text(encoding=TEXT_ENCODING)
-            if task_path and task_path.exists()
-            else ""
-        )
+        sql_text = task_sql_text(task_path)
         features = _downstream_entity_publication_features(sql_text)
         downstream_publication_feature_cache[canonical_name] = features
         return features
@@ -751,11 +763,7 @@ def build_contexts(
                 f"{model_table_name}.sql",
             )
         )
-        etl_content = (
-            task_path.read_text(encoding=TEXT_ENCODING)
-            if task_path and task_path.exists()
-            else ""
-        )
+        etl_content = task_sql_text(task_path)
         upstream_tables = sorted(canonical_upstream.get(name, set()))
         downstream_tables = sorted(canonical_downstream.get(name, set()))
         upstream_metric_groups = {}

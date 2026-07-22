@@ -29,7 +29,6 @@ from sqlglot.lineage import qualify as lineage_qualify  # noqa: F401
 from dw_refactor_agent.config import (
     PROJECT_CONFIG,
     TEXT_ENCODING,
-    iter_project_task_files,
     lineage_data_path,
     lineage_task_cache_path,
     task_source_file,
@@ -68,6 +67,7 @@ from dw_refactor_agent.lineage.sql_task_facts import (
 from dw_refactor_agent.sql.doris import (
     normalize_create_table_for_sqlglot as normalize_create_table_for_sqlglot,
 )
+from dw_refactor_agent.sql.task_analysis import resolve_project_tasks_analysis
 
 if TYPE_CHECKING:
     from dw_refactor_agent.lineage.lineage_output import (
@@ -290,10 +290,14 @@ def main():
 
     # 2. 提取血缘
     all_lineage = []
-    task_files = iter_project_task_files(
+    resolved_tasks = resolve_project_tasks_analysis(
         args.project,
         include_full_refresh=False,
     )
+    task_files = [asset.sql_path for asset, _resolved in resolved_tasks]
+    analysis_sql_by_path = {
+        asset.sql_path: resolved for asset, resolved in resolved_tasks
+    }
 
     parallel = max(1, int(args.parallel or 1))
     print(f"Tasks: {len(task_files)} 个文件, 并行度: {parallel}")
@@ -338,6 +342,7 @@ def main():
             CURRENT_PROJECT,
             path,
         ),
+        task_sql_resolver=lambda path: analysis_sql_by_path[Path(path)],
     )
     all_lineage = extraction_result["lineage"]
     warning_lines = format_missing_ddl_warnings(

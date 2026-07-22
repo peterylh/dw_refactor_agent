@@ -33,6 +33,10 @@ from dw_refactor_agent.lineage.identifiers import (
     split_column_ref,
     table_identity_match_key,
 )
+from dw_refactor_agent.sql.task_analysis import (
+    resolve_project_tasks_analysis,
+    resolve_task_path_analysis,
+)
 
 DEFAULT_BATCH_SIZE = 5000
 LINEAGE_DIR = Path(__file__).resolve().parent
@@ -321,18 +325,38 @@ def _read_task_sql(
     source_file: str,
     *,
     project: str | None = None,
+    resolved_tasks=None,
 ) -> str | None:
     for role_dir in ("mid/tasks", "ads/tasks"):
         candidate = tasks_dir / role_dir / source_file
         if candidate.exists():
+            if project:
+                return resolve_task_path_analysis(
+                    project,
+                    candidate,
+                    source_file=source_file,
+                    resolved_tasks=resolved_tasks,
+                ).sql
             return candidate.read_text(encoding=TEXT_ENCODING)
     sql_file = tasks_dir / source_file
     if sql_file.exists():
+        if project:
+            return resolve_task_path_analysis(
+                project,
+                sql_file,
+                source_file=source_file,
+                resolved_tasks=resolved_tasks,
+            ).sql
         return sql_file.read_text(encoding=TEXT_ENCODING)
     if project:
         project_task = task_path_for_source_file(project, source_file)
         if project_task:
-            return project_task.read_text(encoding=TEXT_ENCODING)
+            return resolve_task_path_analysis(
+                project,
+                project_task,
+                source_file=source_file,
+                resolved_tasks=resolved_tasks,
+            ).sql
     return None
 
 
@@ -523,6 +547,7 @@ def _build_job_rows(
 ) -> tuple[list[tuple], dict[str, int]]:
     job_rows = []
     job_id_map = {}
+    resolved_tasks = resolve_project_tasks_analysis(project)
     for job_id, job in enumerate(jobs, start=1):
         job_name = str(job.get("name") or "").strip()
         source_file = str(job.get("source_file") or "")
@@ -537,6 +562,7 @@ def _build_job_rows(
                     tasks_dir,
                     source_file,
                     project=project,
+                    resolved_tasks=resolved_tasks,
                 ),
             )
         )

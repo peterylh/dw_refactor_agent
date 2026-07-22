@@ -105,7 +105,7 @@ def score_code_quality(
         ):
             continue
         file_name = _display_file_path(project_dir, task_path)
-        sql = task_path.read_text(encoding=TEXT_ENCODING)
+        sql = task.sql or task_path.read_text(encoding=TEXT_ENCODING)
         creates, drops, write_statements = _scan_task_sql(sql)
         source_tables = _scan_task_source_tables(sql)
 

@@ -30,6 +30,7 @@ class ProjectTaskAsset:
     role: str
     sql_path: Path
     source_file: str
+    sql_text: str
     contract_path: Optional[Path] = None
     template_definition: Optional[TaskDefinition] = None
     is_full_refresh: bool = False
@@ -439,6 +440,11 @@ def discover_project_tasks(
                     role=role,
                     sql_path=sql_path,
                     source_file=sql_path.relative_to(task_dir).as_posix(),
+                    sql_text=(
+                        template_definition.sql_text
+                        if template_definition is not None
+                        else sql_text
+                    ),
                     contract_path=contract_path,
                     template_definition=template_definition,
                     is_full_refresh=is_full_refresh,

@@ -70,6 +70,7 @@ TEST_TYPE_BY_FILE = {
     "tests/lineage/test_project_lineage_defaults.py": "guard",
     "tests/lineage/test_refresh_lineage_html.py": "scenario",
     "tests/lineage/test_sql_task_facts.py": "unit",
+    "tests/lineage/test_task_analysis_sql.py": "contract",
     "tests/lineage/test_task_cache.py": "unit",
     "tests/lineage/test_trace_lineage.py": "unit",
     "tests/lineage/test_update_to_select.py": "unit",

@@ -135,6 +135,9 @@ def load_warehouse_config(
     raw_fixture = data.get("fixture") or {}
     if not isinstance(raw_fixture, dict):
         raise ValueError(f"fixture 必须是 mapping: {warehouse_file}")
+    raw_task_templates = data.get("task_templates") or {}
+    if not isinstance(raw_task_templates, dict):
+        raise ValueError(f"task_templates 必须是 mapping: {warehouse_file}")
 
     config = {
         "dir": _warehouse_relative_path(warehouse_dir, data.get("dir"), root),
@@ -163,6 +166,8 @@ def load_warehouse_config(
         config["schema_identity"] = dict(raw_schema_identity)
     if raw_fixture:
         config["fixture"] = dict(raw_fixture)
+    if raw_task_templates:
+        config["task_templates"] = dict(raw_task_templates)
     return config
 
 
