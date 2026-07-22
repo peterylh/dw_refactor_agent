@@ -4,11 +4,13 @@ Configuration package for data warehouse projects.
 
 from . import core
 from .assets import (
+    ProjectTaskAsset,
     assess_cache_path,
     assess_result_path,
     asset_role_for_layer,
     clear_model_metadata_cache,
     determine_layer,
+    discover_project_tasks,
     get_model_layer,
     get_model_metadata,
     get_model_names_by_layer,
@@ -109,6 +111,7 @@ __all__ = [
     "PROJECT_MAP",
     "PROJECT_ROOT",
     "PROJECT_ROOT_ENV",
+    "ProjectTaskAsset",
     "SRC_ROOT",
     "TEXT_ENCODING",
     "WAREHOUSES_ROOT",
@@ -124,6 +127,7 @@ __all__ = [
     "clear_model_metadata_cache",
     "clear_naming_config_cache",
     "determine_layer",
+    "discover_project_tasks",
     "get_business_domain_config",
     "get_model_layer",
     "get_model_metadata",

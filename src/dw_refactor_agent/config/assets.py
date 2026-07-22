@@ -4,15 +4,43 @@ Project asset paths and model metadata access.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
+from dw_refactor_agent.sql.task_template import (
+    ContractValidationError,
+    TaskDefinition,
+    load_task_definition,
+)
+
 from . import core
 
 _model_metadata_cache = {}
 _MID_LAYERS = {"DIM", "DWD", "DWS"}
+
+
+@dataclass(frozen=True)
+class ProjectTaskAsset:
+    """One discovered SQL job and its optional explicit template contract."""
+
+    project: str
+    role: str
+    sql_path: Path
+    source_file: str
+    contract_path: Optional[Path] = None
+    template_definition: Optional[TaskDefinition] = None
+    is_full_refresh: bool = False
+
+    @property
+    def job_name(self) -> str:
+        return self.sql_path.stem
+
+    @property
+    def is_template(self) -> bool:
+        return self.template_definition is not None
 
 
 def clear_model_metadata_cache() -> None:
@@ -275,26 +303,208 @@ def project_task_dirs(project: str) -> list[Path]:
     ]
 
 
+def _task_asset_error(
+    message: str,
+    *,
+    code: str,
+    path: Path,
+) -> ContractValidationError:
+    return ContractValidationError(
+        message,
+        code=code,
+        path=(str(path),),
+    )
+
+
+def _task_role(task_dir: Path) -> str:
+    role = task_dir.parent.name.casefold()
+    return role if role in {"mid", "ads"} else "unknown"
+
+
+def _task_directory_assets(
+    task_dir: Path,
+    *,
+    include_full_refresh: bool,
+) -> tuple[list[Path], list[Path]]:
+    sql_files = []
+    contract_files = []
+    directories = [task_dir]
+    full_refresh_dir = task_dir / "full_refresh"
+    if include_full_refresh and full_refresh_dir.is_dir():
+        directories.append(full_refresh_dir)
+    for directory in directories:
+        for path in sorted(directory.iterdir()):
+            if not path.is_file():
+                continue
+            suffix = path.suffix
+            if suffix == ".sql":
+                sql_files.append(path)
+            elif suffix in {".yaml", ".yml"}:
+                contract_files.append(path)
+    return sql_files, contract_files
+
+
+def discover_project_tasks(
+    project: str,
+    *,
+    include_full_refresh: bool = True,
+) -> list[ProjectTaskAsset]:
+    """Discover and validate legacy/template task pairs in stable order.
+
+    SQL files remain the only source of job identity. A same-directory,
+    same-stem YAML file opts one SQL job into template mode. Any SQL text that
+    contains a template marker must have that explicit contract.
+    """
+    discovered = []
+    job_paths = {}
+    for task_dir in project_task_dirs(project):
+        role = _task_role(task_dir)
+        sql_files, contract_files = _task_directory_assets(
+            task_dir,
+            include_full_refresh=include_full_refresh,
+        )
+        sql_by_pair = {(path.parent, path.stem): path for path in sql_files}
+        contracts_by_pair = {}
+        for contract_path in contract_files:
+            pair_key = (contract_path.parent, contract_path.stem)
+            if pair_key not in sql_by_pair:
+                raise _task_asset_error(
+                    "task contract has no same-directory, same-stem SQL job",
+                    code="template.asset.orphan_contract",
+                    path=contract_path,
+                )
+            if pair_key in contracts_by_pair:
+                raise _task_asset_error(
+                    "task SQL has multiple YAML contracts",
+                    code="template.asset.duplicate_contract",
+                    path=contract_path,
+                )
+            contracts_by_pair[pair_key] = contract_path
+
+        ordered_sql = sorted(
+            (path for path in sql_files if path.parent == task_dir),
+            key=lambda path: path.name,
+        )
+        ordered_sql.extend(
+            sorted(
+                (path for path in sql_files if path.parent != task_dir),
+                key=lambda path: path.name,
+            )
+        )
+        for sql_path in ordered_sql:
+            collision_key = sql_path.stem.casefold()
+            previous = job_paths.get(collision_key)
+            if previous is not None:
+                previous_role, previous_path = previous
+                code = (
+                    "template.asset.cross_role_job_collision"
+                    if previous_role != role
+                    else "template.asset.duplicate_job"
+                )
+                raise _task_asset_error(
+                    f"task job stem collides with {previous_path}",
+                    code=code,
+                    path=sql_path,
+                )
+            job_paths[collision_key] = (role, sql_path)
+
+            contract_path = contracts_by_pair.get(
+                (sql_path.parent, sql_path.stem)
+            )
+            if contract_path is None:
+                try:
+                    sql_text = sql_path.read_text(encoding=core.TEXT_ENCODING)
+                except (OSError, UnicodeError) as exc:
+                    raise _task_asset_error(
+                        f"cannot read task SQL: {exc}",
+                        code="template.asset.sql_read_failed",
+                        path=sql_path,
+                    ) from exc
+                if "${" in sql_text:
+                    raise _task_asset_error(
+                        "task SQL contains a template marker but has no contract",
+                        code="template.asset.missing_contract",
+                        path=sql_path,
+                    )
+                template_definition = None
+            else:
+                template_definition = load_task_definition(
+                    sql_path,
+                    contract_path,
+                )
+            is_full_refresh = sql_path.parent.name == "full_refresh"
+            discovered.append(
+                ProjectTaskAsset(
+                    project=project,
+                    role=role,
+                    sql_path=sql_path,
+                    source_file=sql_path.relative_to(task_dir).as_posix(),
+                    contract_path=contract_path,
+                    template_definition=template_definition,
+                    is_full_refresh=is_full_refresh,
+                )
+            )
+    return discovered
+
+
 def iter_project_task_files(
     project: str,
     *,
     include_full_refresh: bool = True,
 ) -> list[Path]:
     """Return task SQL files, including full-refresh companions if requested."""
-    files: list[Path] = []
-    seen: set[Path] = set()
+    return [
+        item.sql_path
+        for item in discover_project_tasks(
+            project,
+            include_full_refresh=include_full_refresh,
+        )
+    ]
+
+
+def _task_sql_path_records(
+    project: str,
+    *,
+    include_full_refresh: bool,
+) -> list[tuple[str, Path, str, bool]]:
+    """Return a lightweight role/path/source/full-refresh SQL index."""
+    records = []
+    seen_jobs = {}
     for task_dir in project_task_dirs(project):
-        candidates = sorted(task_dir.glob("*.sql"))
-        if include_full_refresh:
-            full_refresh_dir = task_dir / "full_refresh"
-            if full_refresh_dir.exists():
-                candidates.extend(sorted(full_refresh_dir.glob("*.sql")))
-        for task_path in candidates:
-            if task_path in seen:
-                continue
-            seen.add(task_path)
-            files.append(task_path)
-    return files
+        role = _task_role(task_dir)
+        directories = [task_dir]
+        full_refresh_dir = task_dir / "full_refresh"
+        if include_full_refresh and full_refresh_dir.is_dir():
+            directories.append(full_refresh_dir)
+        for directory in directories:
+            is_full_refresh = directory != task_dir
+            for path in sorted(directory.glob("*.sql")):
+                if not path.is_file():
+                    continue
+                collision_key = path.stem.casefold()
+                previous = seen_jobs.get(collision_key)
+                if previous is not None:
+                    previous_role, previous_path = previous
+                    code = (
+                        "template.asset.cross_role_job_collision"
+                        if previous_role != role
+                        else "template.asset.duplicate_job"
+                    )
+                    raise _task_asset_error(
+                        f"task job stem collides with {previous_path}",
+                        code=code,
+                        path=path,
+                    )
+                seen_jobs[collision_key] = (role, path)
+                records.append(
+                    (
+                        role,
+                        path,
+                        path.relative_to(task_dir).as_posix(),
+                        is_full_refresh,
+                    )
+                )
+    return records
 
 
 def task_source_file(project: str, task_path: Path) -> str:
@@ -315,10 +525,14 @@ def task_path_for_source_file(
     normalized = str(source_file or "").replace("\\", "/").strip()
     if not normalized:
         return None
-    for task_dir in project_task_dirs(project):
-        candidate = task_dir / normalized
-        if candidate.exists():
-            return candidate
+    for (
+        _role,
+        path,
+        indexed_source,
+        _is_full_refresh,
+    ) in _task_sql_path_records(project, include_full_refresh=True):
+        if indexed_source == normalized:
+            return path
     return None
 
 
@@ -333,20 +547,22 @@ def task_path_for_job(
     if not clean_job_name:
         return None
 
-    task_dirs = project_task_dirs(project)
-    candidates = [task_dir / f"{clean_job_name}.sql" for task_dir in task_dirs]
+    clean_key = clean_job_name.casefold()
+    records = _task_sql_path_records(
+        project,
+        include_full_refresh=include_full_refresh,
+    )
+    for _role, path, _source_file, is_full_refresh in records:
+        if not is_full_refresh and path.stem.casefold() == clean_key:
+            return path
     if include_full_refresh:
-        for task_dir in task_dirs:
-            full_dir = task_dir / "full_refresh"
-            candidates.extend(
-                [
-                    full_dir / f"{clean_job_name}_full_refresh.sql",
-                    full_dir / f"{clean_job_name}.sql",
-                ]
-            )
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
+        full_refresh_names = {
+            clean_key,
+            f"{clean_key}_full_refresh",
+        }
+        for _role, path, _source_file, is_full_refresh in records:
+            if is_full_refresh and path.stem.casefold() in full_refresh_names:
+                return path
     return None
 
 

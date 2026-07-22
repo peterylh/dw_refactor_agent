@@ -412,7 +412,7 @@ def load_task_definition(
     yaml_source = Path(contract_path)
     try:
         sql_text = sql_source.read_text(encoding=TEXT_ENCODING)
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         raise ContractValidationError(
             f"cannot read SQL template {sql_source}: {exc}",
             code="template.sql.read_failed",
@@ -423,7 +423,7 @@ def load_task_definition(
             yaml_source.read_text(encoding=TEXT_ENCODING),
             Loader=_UniqueKeySafeLoader,
         )
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ContractValidationError(
             f"cannot read task contract {yaml_source}: {exc}",
             code="template.contract.read_failed",

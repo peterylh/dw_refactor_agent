@@ -110,6 +110,7 @@ TEST_TYPE_BY_FILE = {
     "tests/test_retail_banking_schema_compiler.py": "unit",
     "tests/test_retail_banking_semantic_specs.py": "contract",
     "tests/test_shop_static_partitions.py": "guard",
+    "tests/test_task_asset_discovery.py": "contract",
     "tests/test_task_run.py": "scenario",
     "tests/test_taxonomy.py": "guard",
     "tests/test_text_encoding_config.py": "guard",
