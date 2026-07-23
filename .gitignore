@@ -26,3 +26,15 @@ warehouses/*/artifacts/assessment/model_metadata_result.json
 warehouses/*/artifacts/assessment/cache/
 warehouses/*/artifacts/refactor_runs/*
 !warehouses/*/artifacts/refactor_runs/.gitkeep
+
+# 本地私有 A03 迁移资产，禁止提交到远端
+/warehouses/a03_lineage_warehouse/
+/warehouses/新建文件夹/
+/docs/development/a03_template_sql_commit_plan.md
+/docs/development/a03_template_sql_implementation_report.md
+/tests/fixtures/a03_migration/
+/tests/migration/test_a03_complex_templates.py
+/tests/migration/test_a03_dynamic_templates.py
+/tests/migration/test_a03_full_template_gate.py
+/tests/migration/test_a03_regular_templates.py
+/tests/migration/test_a03_representative_templates.py
