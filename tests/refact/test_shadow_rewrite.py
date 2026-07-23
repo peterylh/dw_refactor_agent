@@ -31,6 +31,19 @@ def test_analyze_occurrences_distinguishes_schema_and_data_reads():
     assert ctas_roles == [ReferenceRole.WRITE, ReferenceRole.DATA_READ]
 
 
+def test_analyze_occurrences_skips_duplicate_empty_statements():
+    occurrences = analyze_occurrences(
+        "DROP TABLE IF EXISTS tmp_stage FORCE;;\n"
+        "CREATE TABLE tmp_stage AS SELECT * FROM source_table;;;"
+    )
+
+    assert [(item.table, item.role) for item in occurrences] == [
+        ("tmp_stage", ReferenceRole.WRITE),
+        ("tmp_stage", ReferenceRole.WRITE),
+        ("source_table", ReferenceRole.DATA_READ),
+    ]
+
+
 def test_merge_classifies_target_and_using_source():
     occurrences = analyze_occurrences(
         "MERGE INTO dm.sales t USING dm.sales_delta s "
