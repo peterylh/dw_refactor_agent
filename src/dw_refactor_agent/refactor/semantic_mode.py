@@ -541,9 +541,8 @@ def _task_semantically_equivalent(
         # One fixed analysis binding cannot prove a legacy-to-template
         # migration equivalent for every scheduler invocation.
         return False
-    if (
-        baseline_task.get("normalized_contract")
-        != current_task.get("normalized_contract")
+    if baseline_task.get("normalized_contract") != current_task.get(
+        "normalized_contract"
     ):
         return False
     baseline_sql = baseline_task["analysis_sql"]
@@ -1125,7 +1124,9 @@ def _task_semantic_asset(
     try:
         sql_text = sql_asset.text()
     except UnicodeDecodeError as exc:
-        raise ValueError(f"task SQL is not valid UTF-8: {sql_asset.path}") from exc
+        raise ValueError(
+            f"task SQL is not valid UTF-8: {sql_asset.path}"
+        ) from exc
 
     definition = None
     normalized_contract = None
@@ -1211,7 +1212,8 @@ def _normalized_analysis_sql(sql_text: str) -> dict:
         return {
             "parseable": False,
             "content_sha256": (
-                "sha256:" + hashlib.sha256(sql_text.encode("utf-8")).hexdigest()
+                "sha256:"
+                + hashlib.sha256(sql_text.encode("utf-8")).hexdigest()
             ),
         }
     return {

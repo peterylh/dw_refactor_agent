@@ -375,9 +375,7 @@ def _git(root, *args):
 def _write_semantic_table(root, table, ddl, task, *, task_name=None):
     ddl_path = root / "warehouses/shop/mid/ddl" / f"{table}.sql"
     task_path = (
-        root
-        / "warehouses/shop/mid/tasks"
-        / f"{task_name or table}.sql"
+        root / "warehouses/shop/mid/tasks" / f"{task_name or table}.sql"
     )
     ddl_path.parent.mkdir(parents=True, exist_ok=True)
     task_path.parent.mkdir(parents=True, exist_ok=True)

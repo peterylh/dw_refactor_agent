@@ -29,7 +29,6 @@ warehouses/*/artifacts/refactor_runs/*
 
 # 本地私有 A03 迁移资产，禁止提交到远端
 /warehouses/a03_lineage_warehouse/
-/warehouses/新建文件夹/
 /docs/development/a03_template_sql_commit_plan.md
 /docs/development/a03_template_sql_implementation_report.md
 /tests/fixtures/a03_migration/
