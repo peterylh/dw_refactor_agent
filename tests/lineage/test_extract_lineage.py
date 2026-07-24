@@ -424,6 +424,140 @@ class TestIntegrationEtlToDwd:
         }
         assert not {"ZBJ00000092", "ZBJ00000093"} & all_column_names
 
+    def test_union_derived_literals_do_not_create_alias_source_table(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.src_org (
+                    org_num VARCHAR(32)
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.dst_org (
+                    org_num VARCHAR(32),
+                    org_num_lv INT,
+                    leaf_flg VARCHAR(1)
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO shop_dm.dst_org (org_num, org_num_lv, leaf_flg)
+        SELECT t.org_num, t.org_num_lv, t.leaf_flg
+        FROM (
+            SELECT org_num, 1 AS org_num_lv, '0' AS leaf_flg
+            FROM shop_dm.src_org
+            UNION ALL
+            SELECT org_num, 2 AS org_num_lv, '1' AS leaf_flg
+            FROM shop_dm.src_org
+        ) AS t
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "union_derived_literals.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+        output = build_lineage_output(entries, schema)
+
+        assert diagnostics == []
+        assert _direct_edges(entries) == {
+            ("src_org", "org_num", "dst_org", "org_num"),
+            (None, None, "dst_org", "org_num_lv"),
+            (None, None, "dst_org", "leaf_flg"),
+        }
+        assert {
+            entry["target_column"]: entry["source_type"]
+            for entry in entries
+            if entry.get("transformation_type") == "constant"
+        } == {
+            "org_num_lv": "expression",
+            "leaf_flg": "expression",
+        }
+        assert {table["name"] for table in output["tables"]} == {
+            "src_org",
+            "dst_org",
+        }
+
+    def test_qualified_table_is_not_shadowed_by_same_named_cte(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.src (
+                    id BIGINT
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.dst (
+                    id BIGINT
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO shop_dm.dst (id)
+        WITH src AS (SELECT 1 AS id)
+        SELECT p.id
+        FROM shop_dm.src AS p
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "qualified_table_same_named_cte.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert diagnostics == []
+        assert _direct_edges(entries) == {
+            ("src", "id", "dst", "id"),
+        }
+
+    def test_derived_alias_does_not_shadow_physical_table_lineage(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.src (
+                    id BIGINT
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.dst (
+                    physical_id BIGINT,
+                    literal_id BIGINT
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO shop_dm.dst (physical_id, literal_id)
+        SELECT p.id, src.id
+        FROM shop_dm.src AS p
+        JOIN (SELECT 1 AS id) AS src ON 1 = 1
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "derived_alias_physical_table_collision.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+        output = build_lineage_output(entries, schema)
+
+        assert diagnostics == []
+        assert _direct_edges(entries) == {
+            ("src", "id", "dst", "physical_id"),
+            (None, None, "dst", "literal_id"),
+        }
+        assert {table["name"] for table in output["tables"]} == {
+            "src",
+            "dst",
+        }
+
     def test_ctas_metric_literals_are_not_source_columns(self):
         schema = build_schema_from_texts(
             [
