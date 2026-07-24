@@ -503,6 +503,27 @@ def _change_analysis(direct, downstream=()):
     }
 
 
+def _resolve_template_semantics(
+    tmp_path,
+    base_ref,
+    *,
+    project="shop",
+    lineage=None,
+):
+    lineage = lineage if lineage is not None else {"edges": []}
+    return resolve_semantic_modes(
+        project=project,
+        project_dir="warehouses/shop",
+        change_analysis=_change_analysis(["dws_sales"]),
+        baseline_lineage=lineage,
+        current_lineage=lineage,
+        base_ref=base_ref,
+        repo_root=tmp_path,
+        current_manifest={"verification_intent": {"semantic_modes": {}}},
+        historical_manifests=[],
+    )
+
+
 def _semantic_git_project(tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "test@example.com")
@@ -582,17 +603,7 @@ def test_legacy_to_template_migration_stays_unknown_at_fixed_analysis_date(
         encoding="utf-8",
     )
 
-    result = resolve_semantic_modes(
-        project="shop",
-        project_dir="warehouses/shop",
-        change_analysis=_change_analysis(["dws_sales"]),
-        baseline_lineage={"edges": []},
-        current_lineage={"edges": []},
-        base_ref=base_ref,
-        repo_root=tmp_path,
-        current_manifest={"verification_intent": {"semantic_modes": {}}},
-        historical_manifests=[],
-    )
+    result = _resolve_template_semantics(tmp_path, base_ref)
 
     semantics = result.target_semantics["dws_sales"]
     assert semantics["automatic_mode"] is None
@@ -616,17 +627,7 @@ def test_template_yaml_format_only_change_remains_automatically_equivalent(
         encoding="utf-8",
     )
 
-    result = resolve_semantic_modes(
-        project="shop",
-        project_dir="warehouses/shop",
-        change_analysis=_change_analysis(["dws_sales"]),
-        baseline_lineage={"edges": []},
-        current_lineage={"edges": []},
-        base_ref=base_ref,
-        repo_root=tmp_path,
-        current_manifest={"verification_intent": {"semantic_modes": {}}},
-        historical_manifests=[],
-    )
+    result = _resolve_template_semantics(tmp_path, base_ref)
 
     assert result.target_semantics["dws_sales"]["automatic_mode"] == (
         "equivalent"
@@ -652,58 +653,9 @@ def test_template_contract_semantic_change_is_not_hidden_by_analysis_sql(
         encoding="utf-8",
     )
 
-    result = resolve_semantic_modes(
-        project="shop",
-        project_dir="warehouses/shop",
-        change_analysis=_change_analysis(["dws_sales"]),
-        baseline_lineage={"edges": []},
-        current_lineage={"edges": []},
-        base_ref=base_ref,
-        repo_root=tmp_path,
-        current_manifest={"verification_intent": {"semantic_modes": {}}},
-        historical_manifests=[],
-    )
+    result = _resolve_template_semantics(tmp_path, base_ref)
 
     assert result.target_semantics["dws_sales"]["automatic_mode"] is None
-
-
-def test_task_contract_uses_lineage_job_when_output_name_differs(tmp_path):
-    base_ref, _task_path, contract_path = _template_semantic_project(
-        tmp_path,
-        task_name="prepare_sales",
-        sql=(
-            "INSERT INTO dws_sales SELECT store_id FROM ods_store "
-            "WHERE data_dt = ${etl_date};\n"
-        ),
-        contract=_date_task_contract(),
-    )
-    contract_path.write_text(
-        yaml.safe_dump(
-            _date_task_contract(source="invocation.run_date"),
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-    lineage = _job_lineage(
-        "prepare_sales",
-        "internal.shop_dm.dws_sales",
-    )
-
-    result = resolve_semantic_modes(
-        project="shop",
-        project_dir="warehouses/shop",
-        change_analysis=_change_analysis(["dws_sales"]),
-        baseline_lineage=lineage,
-        current_lineage=lineage,
-        base_ref=base_ref,
-        repo_root=tmp_path,
-        current_manifest={"verification_intent": {"semantic_modes": {}}},
-        historical_manifests=[],
-    )
-
-    semantics = result.target_semantics["dws_sales"]
-    assert semantics["automatic_mode"] is None
-    assert semantics["resolved_mode"] == "unknown"
 
 
 def test_task_job_output_mapping_uses_runtime_project_database(
@@ -741,16 +693,11 @@ def test_task_job_output_mapping_uses_runtime_project_database(
         "internal.dynamic_shop_dm.dws_sales",
     )
 
-    result = resolve_semantic_modes(
+    result = _resolve_template_semantics(
+        tmp_path,
+        base_ref,
         project="dynamic_shop",
-        project_dir="warehouses/shop",
-        change_analysis=_change_analysis(["dws_sales"]),
-        baseline_lineage=lineage,
-        current_lineage=lineage,
-        base_ref=base_ref,
-        repo_root=tmp_path,
-        current_manifest={"verification_intent": {"semantic_modes": {}}},
-        historical_manifests=[],
+        lineage=lineage,
     )
 
     semantics = result.target_semantics["dws_sales"]

@@ -172,6 +172,7 @@ def test_load_persisted_plan_detects_plan_body_edit(tmp_path):
         ("jobs_to_run", {}, "jobs_to_run.*list"),
         ("ddl_changes", {}, "ddl_changes.*list"),
         ("verification", [], "verification.*mapping"),
+        ("task_rendering", [], "task_rendering.*mapping"),
     ],
 )
 def test_load_persisted_plan_rejects_malformed_core_schema(
@@ -184,16 +185,6 @@ def test_load_persisted_plan_rejects_malformed_core_schema(
     plan_path.write_text(json.dumps(persisted), encoding="utf-8")
 
     with pytest.raises(ArtifactFormatError, match=expected):
-        load_persisted_verification_plan(plan_path)
-
-
-def test_load_persisted_plan_requires_frozen_task_rendering_context(tmp_path):
-    plan_path = tmp_path / "verification" / "plan.json"
-    plan = _plan({})
-    plan.pop("task_rendering")
-    write_verification_plan(plan_path, plan)
-
-    with pytest.raises(ArtifactFormatError, match="task_rendering.*mapping"):
         load_persisted_verification_plan(plan_path)
 
 

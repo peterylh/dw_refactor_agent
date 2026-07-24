@@ -48,6 +48,14 @@ def test_task_cache_key_changes_when_sql_schema_or_project_config_changes():
         extractor_hash=metadata.extractor_hash,
         project_config={"catalog": "internal", "db": "other_dm"},
     )
+    changed_analysis = TaskCacheMetadata(
+        sql_hash=metadata.sql_hash,
+        referenced_tables=metadata.referenced_tables,
+        schema_slice_hash=metadata.schema_slice_hash,
+        extractor_hash=metadata.extractor_hash,
+        project_config=metadata.project_config,
+        analysis_identity={"renderer_version": "changed-renderer"},
+    )
 
     base_key = task_cache_key(
         project="demo",
@@ -74,6 +82,11 @@ def test_task_cache_key_changes_when_sql_schema_or_project_config_changes():
         project="demo",
         source_file="dwd_order.sql",
         metadata=changed_project,
+    )
+    assert base_key != task_cache_key(
+        project="demo",
+        source_file="dwd_order.sql",
+        metadata=changed_analysis,
     )
 
 

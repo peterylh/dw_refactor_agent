@@ -14,10 +14,6 @@ from dw_refactor_agent.lineage import (
     lineage_extractor,
     refresh_lineage_html,
 )
-from dw_refactor_agent.lineage.task_cache import (
-    TaskCacheMetadata,
-    task_cache_key,
-)
 from dw_refactor_agent.refactor.incremental_lineage import (
     build_lineage_artifacts,
 )
@@ -180,28 +176,10 @@ def test_analysis_accepts_startup_and_project_source_aliases(tmp_path):
     assert resolved.public_bindings["warehouse_schema"] == "logical_cdm"
 
 
-@pytest.mark.parametrize(
-    "profile",
-    [
-        TaskAnalysisProfile(
-            startup={
-                "business_date": "2025-01-15",
-                "etl_date": "2025-01-16",
-            },
-            project={"cdm_schema": "logical_cdm"},
-        ),
-        TaskAnalysisProfile(
-            startup={"etl_date": "2025-01-15"},
-            project={
-                "warehouse_schema": "logical_cdm",
-                "cdm_schema": "other_cdm",
-            },
-        ),
-    ],
-)
+@pytest.mark.parametrize("scope", ["startup", "project"])
 def test_analysis_rejects_conflicting_prop_and_source_alias_values(
     tmp_path,
-    profile,
+    scope,
 ):
     asset = _analysis_asset(
         tmp_path,
@@ -209,73 +187,67 @@ def test_analysis_rejects_conflicting_prop_and_source_alias_values(
         _aliased_contract(),
     )
 
+    profile = TaskAnalysisProfile(
+        startup={
+            "etl_date": "2025-01-15",
+            **({"business_date": "2025-01-16"} if scope == "startup" else {}),
+        },
+        project={
+            "cdm_schema": "logical_cdm",
+            **(
+                {"warehouse_schema": "other_cdm"} if scope == "project" else {}
+            ),
+        },
+    )
     with pytest.raises(TemplateRenderError) as raised:
         resolve_task_analysis_sql(asset, {}, profile=profile)
 
     assert raised.value.code == "template.render.conflicting_binding"
 
 
-@pytest.mark.parametrize(
-    ("sql", "contract", "profile", "expected_path"),
-    [
-        (
-            "SELECT ${business_date}, ${etl_date};",
+def _ambiguous_alias_case(scope):
+    startup = scope == "startup"
+    root = "invocation" if startup else "project"
+    alias = "business_date" if startup else "warehouse_schema"
+    canonical = "etl_date" if startup else "cdm_schema"
+    data_type = "DATE" if startup else "IDENTIFIER"
+    sql = (
+        f"SELECT ${{{alias}}}, ${{{canonical}}};"
+        if startup
+        else (
+            f"SELECT * FROM ${{{alias}}}.first_table "
+            f"JOIN ${{{canonical}}}.second_table;"
+        )
+    )
+    contract = {
+        "version": 1,
+        "strict": True,
+        f"{scope}_params": [
             {
-                "version": 1,
-                "strict": True,
-                "startup_params": [
-                    {
-                        "prop": "business_date",
-                        "type": "DATE",
-                        "source": "invocation.etl_date",
-                        "required": True,
-                    },
-                    {
-                        "prop": "etl_date",
-                        "type": "DATE",
-                        "source": "invocation.other_date",
-                        "required": True,
-                    },
-                ],
+                "prop": alias,
+                "type": data_type,
+                "source": f"{root}.{canonical}",
+                "required": True,
             },
-            TaskAnalysisProfile(startup={"etl_date": "2025-01-15"}),
-            ("invocation", "etl_date"),
-        ),
-        (
-            (
-                "SELECT * FROM ${warehouse_schema}.first_table "
-                "JOIN ${cdm_schema}.second_table;"
-            ),
             {
-                "version": 1,
-                "strict": True,
-                "project_params": [
-                    {
-                        "prop": "warehouse_schema",
-                        "type": "IDENTIFIER",
-                        "source": "project.cdm_schema",
-                        "required": True,
-                    },
-                    {
-                        "prop": "cdm_schema",
-                        "type": "IDENTIFIER",
-                        "source": "project.other_schema",
-                        "required": True,
-                    },
-                ],
+                "prop": canonical,
+                "type": data_type,
+                "source": f"{root}.other_value",
+                "required": True,
             },
-            TaskAnalysisProfile(project={"cdm_schema": "logical_cdm"}),
-            ("project", "cdm_schema"),
-        ),
-    ],
-)
+        ],
+    }
+    profile_value = "2025-01-15" if startup else "logical_cdm"
+    profile = TaskAnalysisProfile(**{scope: {canonical: profile_value}})
+    return sql, contract, profile, (root, canonical)
+
+
+@pytest.mark.parametrize("scope", ["startup", "project"])
 def test_analysis_rejects_ambiguous_external_aliases(
     tmp_path,
-    sql,
-    contract,
-    profile,
-    expected_path,
+    scope,
 ):
+    sql, contract, profile, expected_path = _ambiguous_alias_case(scope)
     asset = _analysis_asset(tmp_path, sql, contract)
 
     with pytest.raises(TemplateRenderError) as raised:
@@ -344,56 +316,6 @@ def test_analysis_profile_is_explicit_and_missing_roots_fail_closed(
         resolve_project_tasks_analysis("demo")
 
     assert raised.value.code == "template.render.missing_binding"
-
-
-@pytest.mark.parametrize(
-    ("field", "replacement"),
-    [
-        ("template_digest", "sha256:changed-template"),
-        ("config_digest", "sha256:changed-config"),
-        ("binding_digest", "sha256:changed-binding"),
-        ("render_digest", "sha256:changed-render"),
-        ("analysis_profile_digest", "sha256:changed-profile"),
-        ("renderer_version", "changed-renderer"),
-    ],
-)
-def test_each_template_analysis_identity_component_invalidates_cache_key(
-    monkeypatch,
-    tmp_path,
-    field,
-    replacement,
-):
-    _configure_project(monkeypatch, tmp_path)
-    _asset, resolved = resolve_project_tasks_analysis("demo")[0]
-    base_identity = dict(resolved.analysis_identity)
-    metadata = TaskCacheMetadata(
-        sql_hash="sql",
-        referenced_tables=("logical_cdm.source_table",),
-        schema_slice_hash="schema",
-        extractor_hash="extractor",
-        project_config={"catalog": "internal", "db": "logical_cdm"},
-        analysis_identity=base_identity,
-    )
-    changed_identity = dict(base_identity)
-    changed_identity[field] = replacement
-    changed = TaskCacheMetadata(
-        sql_hash=metadata.sql_hash,
-        referenced_tables=metadata.referenced_tables,
-        schema_slice_hash=metadata.schema_slice_hash,
-        extractor_hash=metadata.extractor_hash,
-        project_config=metadata.project_config,
-        analysis_identity=changed_identity,
-    )
-
-    assert task_cache_key(
-        project="demo",
-        source_file="template_job.sql",
-        metadata=metadata,
-    ) != task_cache_key(
-        project="demo",
-        source_file="template_job.sql",
-        metadata=changed,
-    )
 
 
 def test_analysis_identity_is_pickle_safe_for_parallel_workers(

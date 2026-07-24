@@ -223,15 +223,36 @@ project_params:
     return warehouse_path
 
 
-def test_prod_template_binding_change_selects_affected_job(
-    tmp_path, monkeypatch
-):
-    warehouse_path = _init_template_config_repo(tmp_path, monkeypatch)
-    warehouse_path.write_text(
-        warehouse_path.read_text(encoding="utf-8").replace(
+@pytest.mark.parametrize(
+    ("task_relative_dir", "old", "new"),
+    [
+        (
+            "mid/tasks",
             "        source_schema: internal.source\n",
             "        source_schema: internal.changed_source\n",
         ),
+        (
+            "mid/tasks",
+            "      source_schema: internal.source\n",
+            "      source_schema: internal.analysis_source\n",
+        ),
+        (
+            "ods/tasks/internal/source",
+            "        source_schema: internal.source\n",
+            "        source_schema: internal.changed_source\n",
+        ),
+    ],
+)
+def test_template_binding_change_selects_affected_job(
+    tmp_path, monkeypatch, task_relative_dir, old, new
+):
+    warehouse_path = _init_template_config_repo(
+        tmp_path,
+        monkeypatch,
+        task_relative_dir=task_relative_dir,
+    )
+    warehouse_path.write_text(
+        warehouse_path.read_text(encoding="utf-8").replace(old, new),
         encoding="utf-8",
     )
     lineage = _template_config_lineage()
@@ -251,95 +272,23 @@ def test_prod_template_binding_change_selects_affected_job(
     ]
 
 
-def test_analysis_template_binding_change_selects_affected_job(
-    tmp_path, monkeypatch
-):
-    warehouse_path = _init_template_config_repo(tmp_path, monkeypatch)
-    warehouse_path.write_text(
-        warehouse_path.read_text(encoding="utf-8").replace(
-            "      source_schema: internal.source\n",
-            "      source_schema: internal.analysis_source\n",
-        ),
-        encoding="utf-8",
-    )
-    lineage = _template_config_lineage()
-
-    result = build_change_analysis(
-        "demo",
-        lineage,
-        lineage,
-        ["warehouses/demo/warehouse.yaml"],
-        repo_root=tmp_path,
-        base_ref="HEAD",
-    )
-
-    assert result["changed_assets"]["task_jobs"] == ["dws_order"]
-
-
-def test_ods_template_binding_change_selects_affected_job(
-    tmp_path, monkeypatch
-):
-    warehouse_path = _init_template_config_repo(
-        tmp_path,
-        monkeypatch,
-        task_relative_dir="ods/tasks/internal/source",
-    )
-    warehouse_path.write_text(
-        warehouse_path.read_text(encoding="utf-8").replace(
-            "        source_schema: internal.source\n",
-            "        source_schema: internal.changed_source\n",
-        ),
-        encoding="utf-8",
-    )
-    lineage = _template_config_lineage()
-
-    result = build_change_analysis(
-        "demo",
-        lineage,
-        lineage,
-        ["warehouses/demo/warehouse.yaml"],
-        repo_root=tmp_path,
-        base_ref="HEAD",
-    )
-
-    assert result["changed_assets"]["task_jobs"] == ["dws_order"]
-
-
-def test_unused_template_binding_change_does_not_select_template_jobs(
-    tmp_path, monkeypatch
-):
-    warehouse_path = _init_template_config_repo(tmp_path, monkeypatch)
-    warehouse_path.write_text(
-        warehouse_path.read_text(encoding="utf-8").replace(
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        (
             "        source_schema: internal.source\n",
             "        source_schema: internal.source\n"
             "        unused_schema: internal.unused\n",
         ),
-        encoding="utf-8",
-    )
-    lineage = _template_config_lineage()
-
-    result = build_change_analysis(
-        "demo",
-        lineage,
-        lineage,
-        ["warehouses/demo/warehouse.yaml"],
-        repo_root=tmp_path,
-        base_ref="HEAD",
-    )
-
-    assert result["changed_assets"]["task_jobs"] == []
-
-
-def test_unrelated_warehouse_change_does_not_select_template_jobs(
-    tmp_path, monkeypatch
+        ("description: baseline", "description: unrelated change"),
+    ],
+)
+def test_irrelevant_warehouse_change_does_not_select_template_jobs(
+    tmp_path, monkeypatch, old, new
 ):
     warehouse_path = _init_template_config_repo(tmp_path, monkeypatch)
     warehouse_path.write_text(
-        warehouse_path.read_text(encoding="utf-8").replace(
-            "description: baseline",
-            "description: unrelated change",
-        ),
+        warehouse_path.read_text(encoding="utf-8").replace(old, new),
         encoding="utf-8",
     )
     lineage = _template_config_lineage()

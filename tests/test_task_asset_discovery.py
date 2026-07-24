@@ -127,45 +127,43 @@ def test_mixed_legacy_template_and_full_refresh_tasks_are_loaded_explicitly(
     )
 
 
-def test_template_marker_without_contract_fails_during_discovery(
-    monkeypatch,
-    tmp_path,
-):
-    project_dir = _configure_project(monkeypatch, tmp_path)
-    sql_path = _write(
-        project_dir / "mid" / "tasks" / "missing.sql",
-        "SELECT ${etl_date};\n",
-    )
-
-    with pytest.raises(ContractValidationError) as raised:
-        config.discover_project_tasks("demo")
-
-    assert raised.value.code == "template.asset.missing_contract"
-    assert str(sql_path) in str(raised.value)
-
-
-def test_orphan_and_duplicate_task_contracts_fail_closed(
-    monkeypatch,
-    tmp_path,
+@pytest.mark.parametrize(
+    ("case", "code"),
+    [
+        ("missing_contract", "missing_contract"),
+        ("orphan_contract", "orphan_contract"),
+        ("duplicate_contract", "duplicate_contract"),
+        ("wrong_directory", "orphan_contract"),
+    ],
+)
+def test_invalid_task_asset_layouts_fail_closed(
+    monkeypatch, tmp_path, case, code
 ):
     project_dir = _configure_project(monkeypatch, tmp_path)
     tasks_dir = project_dir / "mid" / "tasks"
-    orphan = _write(tasks_dir / "orphan.yaml", "version: 1\n")
+    if case == "missing_contract":
+        invalid_path = _write(
+            tasks_dir / "missing.sql", "SELECT ${etl_date};\n"
+        )
+    elif case == "orphan_contract":
+        invalid_path = _write(tasks_dir / "orphan.yaml", "version: 1\n")
+    elif case == "duplicate_contract":
+        _write(tasks_dir / "job.sql", "SELECT 1;\n")
+        _write(tasks_dir / "job.yaml", "version: 1\nstrict: true\n")
+        invalid_path = _write(
+            tasks_dir / "job.yml", "version: 1\nstrict: true\n"
+        )
+    else:
+        _write(tasks_dir / "job.sql", "SELECT ${etl_date};\n")
+        invalid_path = _write(
+            tasks_dir / "full_refresh" / "job.yaml",
+            yaml.safe_dump(_date_contract(), sort_keys=False),
+        )
 
     with pytest.raises(ContractValidationError) as raised:
         config.discover_project_tasks("demo")
-    assert raised.value.code == "template.asset.orphan_contract"
-    assert str(orphan) in str(raised.value)
-
-    orphan.unlink()
-    _write(tasks_dir / "job.sql", "SELECT 1;\n")
-    _write(tasks_dir / "job.yaml", "version: 1\nstrict: true\n")
-    duplicate = _write(tasks_dir / "job.yml", "version: 1\nstrict: true\n")
-
-    with pytest.raises(ContractValidationError) as raised:
-        config.discover_project_tasks("demo")
-    assert raised.value.code == "template.asset.duplicate_contract"
-    assert str(duplicate) in str(raised.value)
+    assert raised.value.code == f"template.asset.{code}"
+    assert str(invalid_path) in str(raised.value)
 
 
 def test_full_refresh_companion_does_not_inherit_main_task_contract(
@@ -265,22 +263,6 @@ def test_casefold_job_collisions_fail_before_consumers_run(
         config.discover_project_tasks("demo")
 
     assert raised.value.code == f"template.asset.{code}"
-
-
-def test_yaml_must_match_sql_directory_and_exact_stem(monkeypatch, tmp_path):
-    project_dir = _configure_project(monkeypatch, tmp_path)
-    tasks_dir = project_dir / "mid" / "tasks"
-    _write(tasks_dir / "job.sql", "SELECT ${etl_date};\n")
-    mismatch = _write(
-        tasks_dir / "full_refresh" / "job.yaml",
-        yaml.safe_dump(_date_contract(), sort_keys=False),
-    )
-
-    with pytest.raises(ContractValidationError) as raised:
-        config.discover_project_tasks("demo")
-
-    assert raised.value.code == "template.asset.orphan_contract"
-    assert str(mismatch) in str(raised.value)
 
 
 def test_task_path_for_job_preserves_primary_then_full_refresh_lookup(

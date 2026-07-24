@@ -266,6 +266,48 @@ def _write_companion_template(companion_path, *, declare_slice=False):
     )
 
 
+def _write_companion_template_project(
+    monkeypatch, tmp_path, *, declare_slice=False
+):
+    sql_path, companion_path = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  full_refresh_strategy: companion\n"
+        ),
+        warehouse_execution=(
+            "execution:\n"
+            "  default_slice:\n"
+            "    param: etl_date\n"
+            "    column: stat_date\n"
+            "    period: D\n"
+            "  full_refresh_window:\n"
+            "    start_param: etl_start_date\n"
+            "    end_param: etl_end_date\n"
+        ),
+        companion=True,
+    )
+    _write_companion_template(companion_path, declare_slice=declare_slice)
+    return sql_path
+
+
+def _capture_direct_sql(monkeypatch, invocation):
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(kwargs["input"])
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.execution.sql_executor.subprocess.run",
+        fake_run,
+    )
+    DirectSqlExecutor(["mysql"], "demo_dm").execute(invocation)
+    return calls
+
+
 def test_template_invocations_render_typed_dates_and_dynamic_names(
     monkeypatch,
     tmp_path,
@@ -303,17 +345,7 @@ def test_direct_executor_injects_legacy_session_params_after_template_render(
         planner.task_spec("dwd_orders", sql_path),
         ["2025-03-01"],
     )[0]
-    calls = []
-
-    def fake_run(*args, **kwargs):
-        calls.append(kwargs["input"])
-        return subprocess.CompletedProcess(args[0], 0, "", "")
-
-    monkeypatch.setattr(
-        "dw_refactor_agent.execution.sql_executor.subprocess.run",
-        fake_run,
-    )
-    DirectSqlExecutor(["mysql"], "demo_dm").execute(invocation)
+    calls = _capture_direct_sql(monkeypatch, invocation)
 
     assert calls[0].startswith(
         "SET @etl_date = '2025-03-01';\nSET @full_refresh = 0;\n"
@@ -365,17 +397,7 @@ def test_legacy_invocation_sql_bytes_remain_unchanged(
         planner.task_spec("dwd_orders", sql_path),
         ["2025-03-01"],
     )[0]
-    calls = []
-
-    def fake_run(*args, **kwargs):
-        calls.append(kwargs["input"])
-        return subprocess.CompletedProcess(args[0], 0, "", "")
-
-    monkeypatch.setattr(
-        "dw_refactor_agent.execution.sql_executor.subprocess.run",
-        fake_run,
-    )
-    DirectSqlExecutor(["mysql"], "demo_dm").execute(invocation)
+    calls = _capture_direct_sql(monkeypatch, invocation)
 
     assert invocation.resolved_sql is None
     assert invocation.render_inputs == {}
@@ -484,27 +506,7 @@ def test_companion_template_uses_only_full_refresh_window_parameters(
     monkeypatch,
     tmp_path,
 ):
-    sql_path, companion_path = _write_demo_project(
-        monkeypatch,
-        tmp_path,
-        model_config=(
-            "execution:\n"
-            "  materialized: incremental\n"
-            "  full_refresh_strategy: companion\n"
-        ),
-        warehouse_execution=(
-            "execution:\n"
-            "  default_slice:\n"
-            "    param: etl_date\n"
-            "    column: stat_date\n"
-            "    period: D\n"
-            "  full_refresh_window:\n"
-            "    start_param: etl_start_date\n"
-            "    end_param: etl_end_date\n"
-        ),
-        companion=True,
-    )
-    _write_companion_template(companion_path)
+    sql_path = _write_companion_template_project(monkeypatch, tmp_path)
     planner = ExecutionPlanner("demo")
 
     invocation = planner.plan_full_refresh(
@@ -523,27 +525,9 @@ def test_companion_template_rejects_per_slice_usage(
     monkeypatch,
     tmp_path,
 ):
-    sql_path, companion_path = _write_demo_project(
-        monkeypatch,
-        tmp_path,
-        model_config=(
-            "execution:\n"
-            "  materialized: incremental\n"
-            "  full_refresh_strategy: companion\n"
-        ),
-        warehouse_execution=(
-            "execution:\n"
-            "  default_slice:\n"
-            "    param: etl_date\n"
-            "    column: stat_date\n"
-            "    period: D\n"
-            "  full_refresh_window:\n"
-            "    start_param: etl_start_date\n"
-            "    end_param: etl_end_date\n"
-        ),
-        companion=True,
+    sql_path = _write_companion_template_project(
+        monkeypatch, tmp_path, declare_slice=True
     )
-    _write_companion_template(companion_path, declare_slice=True)
     planner = ExecutionPlanner("demo")
 
     with pytest.raises(ExecutionConfigError, match="usage.slices"):

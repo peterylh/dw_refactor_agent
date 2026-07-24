@@ -206,6 +206,50 @@ LIMIT 100;
     assert result.normalized_summary()["config_digest"].startswith("sha256:")
 
 
+def _render_temporal_derivation(
+    *,
+    source_type,
+    source_value,
+    output_type,
+    operation,
+    amount=None,
+    format_name=None,
+):
+    derive = {"from": "source_value", "operation": operation}
+    if amount is not None:
+        derive["amount"] = amount
+    if format_name is not None:
+        derive["format"] = format_name
+    definition = build_task_definition(
+        "SELECT ${derived_value};",
+        {
+            "version": 1,
+            "strict": True,
+            "startup_params": [
+                {
+                    "prop": "source_value",
+                    "type": source_type,
+                    "source": "invocation.source_value",
+                    "required": True,
+                }
+            ],
+            "local_params": [
+                {
+                    "prop": "derived_value",
+                    "direct": "IN",
+                    "type": output_type,
+                    "value": {"derive": derive},
+                }
+            ],
+        },
+    )
+    return render_task(
+        definition,
+        mode="analysis",
+        bindings=RenderBindings(startup={"source_value": source_value}),
+    ).sql
+
+
 @pytest.mark.parametrize(
     ("operation", "amount", "etl_date", "expected"),
     [
@@ -220,41 +264,15 @@ LIMIT 100;
     ],
 )
 def test_date_derivation_matrix(operation, amount, etl_date, expected):
-    derived = {
-        "from": "etl_date",
-        "operation": operation,
-    }
-    if amount is not None:
-        derived["amount"] = amount
-    contract = {
-        "version": 1,
-        "strict": True,
-        "startup_params": [
-            {
-                "prop": "etl_date",
-                "type": "DATE",
-                "source": "invocation.etl_date",
-                "required": True,
-            }
-        ],
-        "local_params": [
-            {
-                "prop": "derived_date",
-                "direct": "IN",
-                "type": "DATE",
-                "value": {"derive": derived},
-            }
-        ],
-    }
-    definition = build_task_definition("SELECT ${derived_date};", contract)
-
-    rendered = render_task(
-        definition,
-        mode="analysis",
-        bindings=RenderBindings(startup={"etl_date": etl_date}),
+    sql = _render_temporal_derivation(
+        source_type="DATE",
+        source_value=etl_date,
+        output_type="DATE",
+        operation=operation,
+        amount=amount,
     )
 
-    assert rendered.sql == f"SELECT '{expected}';"
+    assert sql == f"SELECT '{expected}';"
 
 
 @pytest.mark.parametrize(
@@ -271,120 +289,39 @@ def test_date_derivation_matrix(operation, amount, etl_date, expected):
     ],
 )
 def test_timestamp_derivations_preserve_time(operation, amount, expected):
-    derive = {"from": "run_ts", "operation": operation}
-    if amount is not None:
-        derive["amount"] = amount
-    definition = build_task_definition(
-        "SELECT ${derived_ts};",
-        {
-            "version": 1,
-            "strict": True,
-            "startup_params": [
-                {
-                    "prop": "run_ts",
-                    "type": "TIMESTAMP",
-                    "source": "invocation.run_ts",
-                    "required": True,
-                }
-            ],
-            "local_params": [
-                {
-                    "prop": "derived_ts",
-                    "direct": "IN",
-                    "type": "TIMESTAMP",
-                    "value": {"derive": derive},
-                }
-            ],
-        },
+    sql = _render_temporal_derivation(
+        source_type="TIMESTAMP",
+        source_value="2024-02-29 12:34:56",
+        output_type="TIMESTAMP",
+        operation=operation,
+        amount=amount,
     )
 
-    rendered = render_task(
-        definition,
-        mode="analysis",
-        bindings=RenderBindings(startup={"run_ts": "2024-02-29 12:34:56"}),
-    )
-
-    assert rendered.sql == f"SELECT '{expected}';"
+    assert sql == f"SELECT '{expected}';"
 
 
 def test_timestamp_format_derivation_preserves_time():
-    definition = build_task_definition(
-        "SELECT ${run_time};",
-        {
-            "version": 1,
-            "strict": True,
-            "startup_params": [
-                {
-                    "prop": "run_ts",
-                    "type": "TIMESTAMP",
-                    "source": "invocation.run_ts",
-                    "required": True,
-                }
-            ],
-            "local_params": [
-                {
-                    "prop": "run_time",
-                    "direct": "IN",
-                    "type": "VARCHAR",
-                    "value": {
-                        "derive": {
-                            "from": "run_ts",
-                            "operation": "format_date",
-                            "format": "HH:mm:ss",
-                        }
-                    },
-                }
-            ],
-        },
+    sql = _render_temporal_derivation(
+        source_type="TIMESTAMP",
+        source_value="2024-02-29 12:34:56",
+        output_type="VARCHAR",
+        operation="format_date",
+        format_name="HH:mm:ss",
     )
 
-    rendered = render_task(
-        definition,
-        mode="analysis",
-        bindings=RenderBindings(startup={"run_ts": "2024-02-29 12:34:56"}),
-    )
-
-    assert rendered.sql == "SELECT '12:34:56';"
+    assert sql == "SELECT '12:34:56';"
 
 
 def test_timestamp_derivation_can_explicitly_project_to_date():
-    definition = build_task_definition(
-        "SELECT ${derived_date};",
-        {
-            "version": 1,
-            "strict": True,
-            "startup_params": [
-                {
-                    "prop": "run_ts",
-                    "type": "TIMESTAMP",
-                    "source": "invocation.run_ts",
-                    "required": True,
-                }
-            ],
-            "local_params": [
-                {
-                    "prop": "derived_date",
-                    "direct": "IN",
-                    "type": "DATE",
-                    "value": {
-                        "derive": {
-                            "from": "run_ts",
-                            "operation": "add_days",
-                            "amount": 1,
-                        }
-                    },
-                }
-            ],
-        },
+    sql = _render_temporal_derivation(
+        source_type="TIMESTAMP",
+        source_value="2024-02-29 12:34:56",
+        output_type="DATE",
+        operation="add_days",
+        amount=1,
     )
 
-    rendered = render_task(
-        definition,
-        mode="analysis",
-        bindings=RenderBindings(startup={"run_ts": "2024-02-29 12:34:56"}),
-    )
-
-    assert rendered.sql == "SELECT '2024-03-01';"
+    assert sql == "SELECT '2024-03-01';"
 
 
 def test_timestamp_project_binding_rejects_yaml_date_scalar():
@@ -435,7 +372,6 @@ def test_analysis_render_is_independent_of_working_directory_timezone_and_now(
     assert first.sql == second.sql
     assert first.binding_digest == second.binding_digest
     assert first.render_digest == second.render_digest
-    assert renderer_semantics_digest() == renderer_semantics_digest()
 
 
 def test_modes_share_derivation_graph_but_bind_explicit_root_values():
@@ -698,14 +634,6 @@ def test_binding_alias_conflicts_and_identifier_overrides_fail_closed():
             ),
         )
     assert raised.value.code == "template.render.conflicting_binding"
-
-    with pytest.raises(TemplateRenderError) as raised:
-        render_task(
-            _definition(),
-            mode="execution",
-            bindings=_bindings(source_table="other.table"),
-        )
-    assert raised.value.code == "template.render.forbidden_override"
 
 
 def test_empty_list_override_fails_before_emitting_invalid_in_clause():

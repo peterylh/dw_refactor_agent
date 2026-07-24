@@ -390,6 +390,32 @@ def test_contract_validates_reference_and_derivation_type_signatures(mutate):
     }
 
 
+def _static_value_contract(section, data_type, value, *, render=None):
+    parameter = {
+        "prop": "value",
+        "type": data_type,
+    }
+    if section == "local":
+        parameter.update({"direct": "IN", "value": value})
+        parameter_section = "local_params"
+    else:
+        parameter.update(
+            {
+                "source": "invocation.value",
+                "required": False,
+                "default": value,
+            }
+        )
+        parameter_section = "startup_params"
+    if render is not None:
+        parameter["render"] = render
+    return {
+        "version": 1,
+        "strict": True,
+        parameter_section: [parameter],
+    }
+
+
 @pytest.mark.parametrize(
     "section",
     ["local", "default"],
@@ -398,32 +424,9 @@ def test_contract_prevalidates_static_and_default_values_without_echoing_them(
     section,
 ):
     secret = "not-an-integer-secret"
-    raw = {
-        "version": 1,
-        "strict": True,
-    }
-    if section == "local":
-        raw["local_params"] = [
-            {
-                "prop": "secret_value",
-                "direct": "IN",
-                "type": "INTEGER",
-                "value": secret,
-            }
-        ]
-    else:
-        raw["startup_params"] = [
-            {
-                "prop": "secret_value",
-                "type": "INTEGER",
-                "source": "invocation.secret_value",
-                "required": False,
-                "default": secret,
-            }
-        ]
 
     with pytest.raises(ContractValidationError) as raised:
-        parse_contract(raw)
+        parse_contract(_static_value_contract(section, "INTEGER", secret))
 
     assert raised.value.code == "template.contract.invalid_static_value"
     assert secret not in str(raised.value)
@@ -475,21 +478,8 @@ def test_contract_prevalidates_final_sql_tokens_without_echoing_values(
     data_type,
     secret,
 ):
-    raw = {
-        "version": 1,
-        "strict": True,
-        "local_params": [
-            {
-                "prop": "secret_value",
-                "direct": "IN",
-                "type": data_type,
-                "value": secret,
-            }
-        ],
-    }
-
     with pytest.raises(ContractValidationError) as raised:
-        parse_contract(raw)
+        parse_contract(_static_value_contract("local", data_type, secret))
 
     assert raised.value.code == "template.contract.invalid_static_value"
     assert secret not in str(raised.value)
@@ -523,24 +513,68 @@ def test_in_memory_contract_rejects_non_string_field_names_structurally():
 
 
 def test_contract_rejects_empty_static_lists_before_sql_rendering():
-    raw = {
+    with pytest.raises(ContractValidationError) as raised:
+        parse_contract(
+            _static_value_contract(
+                "local",
+                "LIST",
+                [],
+                render={"item_type": "INTEGER"},
+            )
+        )
+
+    assert raised.value.code == "template.contract.invalid_static_value"
+
+
+def _temporal_root_contract(data_type, **render):
+    parameter = {
+        "prop": "value",
+        "type": data_type,
+        "source": "invocation.value",
+        "required": True,
+    }
+    if render:
+        parameter["render"] = render
+    return {
         "version": 1,
         "strict": True,
+        "startup_params": [parameter],
+    }
+
+
+def _temporal_derivation_contract(
+    source_type,
+    output_type,
+    operation,
+    *,
+    amount=None,
+    format_name=None,
+):
+    derive = {"from": "source_value", "operation": operation}
+    if amount is not None:
+        derive["amount"] = amount
+    if format_name is not None:
+        derive["format"] = format_name
+    return {
+        "version": 1,
+        "strict": True,
+        "startup_params": [
+            {
+                "prop": "source_value",
+                "type": source_type,
+                "source": "invocation.source_value",
+                "required": True,
+            }
+        ],
         "local_params": [
             {
-                "prop": "values",
+                "prop": "derived_value",
                 "direct": "IN",
-                "type": "LIST",
-                "value": [],
-                "render": {"item_type": "INTEGER"},
+                "type": output_type,
+                "value": {"derive": derive},
             }
         ],
     }
-
-    with pytest.raises(ContractValidationError) as raised:
-        parse_contract(raw)
-
-    assert raised.value.code == "template.contract.invalid_static_value"
 
 
 @pytest.mark.parametrize(
@@ -561,22 +595,10 @@ def test_contract_rejects_temporal_formats_that_invent_components(
     field,
     format_name,
 ):
-    raw = {
-        "version": 1,
-        "strict": True,
-        "startup_params": [
-            {
-                "prop": "value",
-                "type": data_type,
-                "source": "invocation.value",
-                "required": True,
-                "render": {field: format_name},
-            }
-        ],
-    }
-
     with pytest.raises(ContractValidationError) as raised:
-        parse_contract(raw)
+        parse_contract(
+            _temporal_root_contract(data_type, **{field: format_name})
+        )
 
     assert raised.value.code == "template.contract.invalid_format"
     assert raised.value.path[-1] == field
@@ -599,22 +621,11 @@ def test_contract_accepts_lossless_temporal_inputs_and_safe_outputs(
     output_format,
 ):
     contract = parse_contract(
-        {
-            "version": 1,
-            "strict": True,
-            "startup_params": [
-                {
-                    "prop": "value",
-                    "type": data_type,
-                    "source": "invocation.value",
-                    "required": True,
-                    "render": {
-                        "input_format": input_format,
-                        "format": output_format,
-                    },
-                }
-            ],
-        }
+        _temporal_root_contract(
+            data_type,
+            input_format=input_format,
+            format=output_format,
+        )
     )
 
     render = contract.startup_params[0].render
@@ -643,45 +654,26 @@ startup_params:
 
 
 def test_contract_rejects_temporal_derivations_that_invent_components():
-    raw = {
-        "version": 1,
-        "strict": True,
-        "startup_params": [
-            {
-                "prop": "etl_date",
-                "type": "DATE",
-                "source": "invocation.etl_date",
-                "required": True,
-            }
-        ],
-        "local_params": [
-            {
-                "prop": "derived_ts",
-                "direct": "IN",
-                "type": "TIMESTAMP",
-                "value": {
-                    "derive": {
-                        "from": "etl_date",
-                        "operation": "add_days",
-                        "amount": 1,
-                    }
-                },
-            }
-        ],
-    }
-
     with pytest.raises(ContractValidationError) as raised:
-        parse_contract(raw)
+        parse_contract(
+            _temporal_derivation_contract(
+                "DATE", "TIMESTAMP", "add_days", amount=1
+            )
+        )
 
     assert raised.value.code == "template.contract.invalid_derivation_type"
 
 
 def test_contract_rejects_time_format_for_date_derivation_source():
-    raw = deepcopy(_valid_contract())
-    raw["local_params"][1]["value"]["derive"]["format"] = "HH:mm:ss"
-
     with pytest.raises(ContractValidationError) as raised:
-        parse_contract(raw)
+        parse_contract(
+            _temporal_derivation_contract(
+                "DATE",
+                "IDENTIFIER",
+                "format_date",
+                format_name="HH:mm:ss",
+            )
+        )
 
     assert raised.value.code == "template.contract.invalid_format"
     assert raised.value.path[-1] == "format"
