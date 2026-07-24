@@ -449,6 +449,161 @@ def _derived_leaf_sources(
     return sources
 
 
+def _derived_queries_by_alias(select_expr):
+    if not isinstance(select_expr, exp.Select):
+        return {}
+
+    ctes = _collect_ctes(select_expr)
+    ctes_by_key = {
+        _identifier_match_key(cte_name): cte_query
+        for cte_name, cte_query in ctes.items()
+    }
+    derived_queries = {}
+    for relation in _iter_relation_sources(select_expr):
+        if isinstance(relation, exp.Subquery) and isinstance(
+            relation.this, (exp.Select, exp.SetOperation)
+        ):
+            alias_key = _identifier_match_key(relation.alias_or_name)
+            if alias_key:
+                derived_queries[alias_key] = relation.this
+            continue
+        if not isinstance(relation, exp.Table):
+            continue
+        if relation.args.get("db") or relation.args.get("catalog"):
+            continue
+        table_key = _identifier_match_key(_strip_db(_table_name(relation)))
+        cte_query = ctes_by_key.get(table_key)
+        if cte_query is None:
+            continue
+        for name in (relation.alias_or_name, relation.name):
+            alias_key = _identifier_match_key(name)
+            if alias_key:
+                derived_queries[alias_key] = cte_query
+    return derived_queries
+
+
+def _physical_aliases_by_table_name(select_expr):
+    if not isinstance(select_expr, exp.Select):
+        return {}
+
+    cte_keys = {
+        _identifier_match_key(cte_name)
+        for cte_name in _collect_ctes(select_expr)
+    }
+    aliases_by_table = {}
+    for relation in _iter_relation_sources(select_expr):
+        if not isinstance(relation, exp.Table):
+            continue
+        table_key = _identifier_match_key(_strip_db(_table_name(relation)))
+        is_qualified = bool(
+            relation.args.get("db") or relation.args.get("catalog")
+        )
+        if not is_qualified and table_key in cte_keys:
+            continue
+        alias_key = _identifier_match_key(
+            relation.alias_or_name or relation.name
+        )
+        if table_key and alias_key:
+            aliases_by_table.setdefault(table_key, set()).add(alias_key)
+    return aliases_by_table
+
+
+def _projection_table_keys(projection):
+    if projection is None:
+        return set()
+    return {
+        _identifier_match_key(column.table)
+        for column in projection.find_all(exp.Column)
+        if _identifier_match_key(column.table)
+    }
+
+
+def _set_operand_projection_lists(query_expr):
+    query_expr = _unwrap_query_expression(query_expr)
+    if isinstance(query_expr, exp.Select):
+        return [list(query_expr.expressions)]
+    if not isinstance(query_expr, exp.SetOperation):
+        return []
+    return _set_operand_projection_lists(
+        query_expr.args.get("this")
+    ) + _set_operand_projection_lists(query_expr.args.get("expression"))
+
+
+def _derived_output_is_column_free(query_expr, column_name):
+    column_key = _identifier_match_key(column_name)
+    matching_indexes = [
+        idx
+        for idx, output_name in enumerate(_projection_output_names(query_expr))
+        if _identifier_match_key(output_name) == column_key
+    ]
+    if len(matching_indexes) != 1:
+        return False
+
+    projection_index = matching_indexes[0]
+    projection_lists = _set_operand_projection_lists(query_expr)
+    if not projection_lists:
+        return False
+    for projections in projection_lists:
+        if projection_index >= len(projections):
+            return False
+        if list(projections[projection_index].find_all(exp.Column)):
+            return False
+    return True
+
+
+def _resolve_derived_alias_edges(
+    edges,
+    select_expr,
+    projection,
+    schema,
+    file_path,
+    diagnostics,
+):
+    derived_queries = _derived_queries_by_alias(select_expr)
+    if not derived_queries:
+        return edges, False
+
+    projection_table_keys = _projection_table_keys(projection)
+    physical_aliases = _physical_aliases_by_table_name(select_expr)
+    resolved_edges = []
+    has_non_column_source = False
+    for edge in edges:
+        alias_key = _identifier_match_key(edge.get("source_table"))
+        derived_query = derived_queries.get(alias_key)
+        if derived_query is None:
+            resolved_edges.append(edge)
+            continue
+        if projection_table_keys and (
+            alias_key not in projection_table_keys
+            or projection_table_keys & physical_aliases.get(alias_key, set())
+        ):
+            resolved_edges.append(edge)
+            continue
+        source_column = edge.get("source_column")
+        if _derived_output_is_column_free(derived_query, source_column):
+            has_non_column_source = True
+            continue
+        leaf_sources = _derived_leaf_sources(
+            derived_query,
+            source_column,
+            schema,
+            file_path=file_path,
+            diagnostics=diagnostics,
+        )
+        if not leaf_sources:
+            resolved_edges.append(edge)
+            continue
+        for source_table, source_column in leaf_sources:
+            resolved_edges.append(
+                {
+                    **edge,
+                    "source_table": source_table,
+                    "source_column": source_column,
+                }
+            )
+    return resolved_edges, has_non_column_source
+
+
 def _indirect_entries_from_select(
     select_expr,
     target_table,
@@ -877,6 +1032,23 @@ def _trace_lineage(
                 target_table,
                 target_col,
                 schema,
+            )
+        edges, has_non_column_derived_source = _resolve_derived_alias_edges(
+            edges,
+            lineage_select_expr,
+            projection,
+            schema,
+            file_path,
+            diagnostics,
+        )
+        if has_non_column_derived_source and not edges:
+            entries.append(
+                _constant_lineage_entry(
+                    target_table,
+                    target_col,
+                    projection if projection is not None else node.expression,
+                    file_path,
+                )
             )
         seen = set()
         for edge in edges:
