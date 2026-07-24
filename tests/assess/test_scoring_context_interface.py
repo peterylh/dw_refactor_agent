@@ -40,7 +40,11 @@ def _check_by_rule(result, rule_id):
 
 def _models_from_tables(tables):
     return {
-        table["name"]: {"name": table["name"], "layer": table["layer"]}
+        table["name"]: {
+            "version": 2,
+            "name": table["name"],
+            "layer": table["layer"],
+        }
         for table in tables
         if table.get("name") and table.get("layer")
     }

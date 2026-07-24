@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
+
+from dw_refactor_agent.config import (
+    GovernedModelMetadata,
+    UnsupportedModelGovernanceError,
+    ensure_governed_model,
+    get_execution_contract,
+)
 
 
 class ExecutionConfigError(ValueError):
@@ -19,6 +26,7 @@ ALLOWED_STRATEGIES = {
 }
 ALLOWED_PERIODS = {"D", "M", "W", "H"}
 EXECUTION_CONFIG_FIELDS = {"materialized", "full_refresh_strategy"}
+ALLOWED_EXECUTION_MODES = {"task", "taskless"}
 
 
 @dataclass(frozen=True)
@@ -28,11 +36,17 @@ class SliceConfig:
     period: str
 
 
-def execution_config_for_model(job_name: str, raw_model: dict) -> dict:
-    raw_execution = raw_model.get("execution") or {}
-    if not isinstance(raw_execution, dict):
-        raise ExecutionConfigError(f"[{job_name}] execution must be a mapping")
-
+def governed_execution_model(
+    job_name: str,
+    raw_model: Mapping[str, Any],
+    *,
+    source: str = "",
+) -> GovernedModelMetadata:
+    """Validate a formal model at the execution boundary."""
+    if not isinstance(raw_model, Mapping):
+        raise ExecutionConfigError(
+            f"[{job_name}] model metadata must be a mapping"
+        )
     raw_config = raw_model.get("config") or {}
     if isinstance(raw_config, dict):
         deprecated = sorted(EXECUTION_CONFIG_FIELDS.intersection(raw_config))
@@ -43,8 +57,43 @@ def execution_config_for_model(job_name: str, raw_model: dict) -> dict:
                 f"[{job_name}] {old_fields} is no longer supported; "
                 f"use {new_fields}"
             )
+    try:
+        return ensure_governed_model(
+            raw_model,
+            source=source or f"execution model {job_name}",
+        )
+    except UnsupportedModelGovernanceError as exc:
+        raise ExecutionConfigError(f"[{job_name}] {exc}") from exc
 
-    return dict(raw_execution)
+
+def execution_config_for_model(job_name: str, raw_model: dict) -> dict:
+    model = governed_execution_model(job_name, raw_model)
+    try:
+        return get_execution_contract(model)
+    except UnsupportedModelGovernanceError as exc:
+        raise ExecutionConfigError(f"[{job_name}] {exc}") from exc
+
+
+def normalize_execution_mode(job_name: str, value: Any) -> str:
+    """Normalize the execution ownership mode at every runtime boundary."""
+    mode = str(value or "task").strip().casefold()
+    if mode not in ALLOWED_EXECUTION_MODES:
+        allowed = ", ".join(sorted(ALLOWED_EXECUTION_MODES))
+        raise ExecutionConfigError(
+            f"[{job_name}] execution.mode must be one of: {allowed}"
+        )
+    return mode
+
+
+def require_runnable_execution(
+    job_name: str,
+    execution: Mapping[str, Any],
+) -> None:
+    """Reject a real task bound to a model owned by an external producer."""
+    if normalize_execution_mode(job_name, execution.get("mode")) == "taskless":
+        raise ExecutionConfigError(
+            f"[{job_name}] task SQL cannot bind to execution.mode=taskless"
+        )
 
 
 def normalize_materialized(job_name: str, value: Any) -> str:

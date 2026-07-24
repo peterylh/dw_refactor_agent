@@ -11,11 +11,9 @@ DWD/DWS 表中的指标字段回写到 models/{table}.yaml，并把 DWD 事实�
 from __future__ import annotations
 
 import sys
-from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import yaml
 
@@ -23,6 +21,10 @@ _src_root = Path(__file__).resolve().parents[3]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
+from dw_refactor_agent.assessment.llm.catalog_proposals import (
+    build_catalog_proposal_report,
+    empty_catalog_proposal_report,
+)
 from dw_refactor_agent.assessment.llm.generation_contract import (
     infer_execution_mapping,
 )
@@ -33,6 +35,14 @@ from dw_refactor_agent.assessment.llm.layer_resolution import (
 )
 from dw_refactor_agent.assessment.llm.metadata_flow import (
     MetadataFlowPlan,
+)
+from dw_refactor_agent.assessment.llm.model_generation_manifest import (
+    GenerateAssetManifest,
+    build_generate_asset_preflight,
+)
+from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    MetadataPublicationOutcome,
+    transactional_metadata_publication,
 )
 from dw_refactor_agent.assessment.llm.model_metadata_runtime import (
     project_root,
@@ -53,13 +63,14 @@ from dw_refactor_agent.assessment.project_facts.business_semantics import (
     LEGACY_BUSINESS_SEMANTICS_FILE_NAME,
     _infer_table_type,
     _layer_from_table_name,
-    _normalize_catalog_code,
     _split_catalog_payloads,
-    build_business_semantics_catalog_from_inspection,
     build_initial_business_semantics_catalog,
     catalog_mapping_for_model,
     load_business_semantics_catalog,
     write_initial_business_semantics_catalog,
+)
+from dw_refactor_agent.assessment.semantic_models import (
+    CanonicalSemanticPayload,
 )
 from dw_refactor_agent.config import (
     PROJECT_CONFIG,
@@ -111,6 +122,7 @@ class GenerateModelMetadataPlan:
     model_paths: dict[str, Path]
     model_updates: list[dict[str, Any]]
     planned_deleted_model_files: list[str]
+    asset_manifest: GenerateAssetManifest
 
 
 def _catalog_table_assets(project: str) -> dict[str, TableAsset]:
@@ -193,6 +205,11 @@ def _ensure_metadata_catalog_skeleton(
         "catalog_initialized": bool(written_names),
         "catalog_init_written_names": [] if dry_run else written_names,
         "planned_catalog_written_names": written_names if dry_run else [],
+        "planned_catalog_deleted_files": (
+            list(init_result.get("legacy_paths_to_remove") or [])
+            if dry_run
+            else []
+        ),
     }
     return catalog, report
 
@@ -219,64 +236,15 @@ def _generate_metadata_catalog_for_plan(
     }
 
 
-def _catalog_entries_by_code(
-    catalog: dict[str, Any],
-    key: str,
-) -> dict[str, dict[str, Any]]:
-    entries: dict[str, dict[str, Any]] = {}
-    for entry in catalog.get(key) or []:
-        if not isinstance(entry, dict):
-            continue
-        raw_code = str(entry.get("code") or "").strip()
-        canonical_code = _normalize_catalog_code(raw_code)
-        if not canonical_code:
-            continue
-        normalized = dict(entry)
-        normalized["code"] = raw_code
-        normalized.pop("tables", None)
-        entries[canonical_code] = normalized
-    return entries
-
-
-def _catalog_entry_changes(
-    base_catalog: dict[str, Any],
-    candidate_catalog: dict[str, Any],
-) -> list[dict[str, Any]]:
-    changes = []
-    for section in ("business_processes", "semantic_subjects"):
-        before = _catalog_entries_by_code(base_catalog, section)
-        after = _catalog_entries_by_code(candidate_catalog, section)
-        for code, entry in sorted(after.items()):
-            previous = before.get(code)
-            if previous is None:
-                changes.append(
-                    {
-                        "section": section,
-                        "action": "add",
-                        "code": code,
-                        "entry": entry,
-                    }
-                )
-            elif previous != entry:
-                changes.append(
-                    {
-                        "section": section,
-                        "action": "update",
-                        "code": code,
-                        "previous": previous,
-                        "entry": entry,
-                    }
-                )
-    return changes
-
-
 def _empty_catalog_update_report() -> dict[str, Any]:
-    return {
+    report = {
         "catalog_update": None,
         "catalog_change_count": 0,
         "catalog_updates": [],
         "planned_catalog_updates": [],
     }
+    report.update(empty_catalog_proposal_report())
+    return report
 
 
 def _resolved_catalog_results_from_inspection_results(
@@ -311,13 +279,41 @@ def _resolved_catalog_results_from_llm_result(
     model_metadata: dict[str, dict[str, Any]],
     resolution_policy: LayerResolutionPolicy,
 ) -> list[TableInspectResult]:
+    decisions_by_table = {
+        str(decision.get("table") or "").casefold(): decision
+        for decision in llm_result.get("local_section_decisions") or []
+        if isinstance(decision, dict)
+    }
+    proposal_only_issue_codes = {
+        "business_process_unknown",
+        "semantic_subject_unknown",
+    }
     results = []
     for item in llm_result.get("tables") or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("status") or "").strip().lower() == "blocked":
+        table_key = str(item.get("table_name") or "").casefold()
+        local_decision = decisions_by_table.get(table_key)
+        if local_decision is not None:
+            issue_codes = {
+                str(issue.get("code") or "")
+                for issue in local_decision.get("issues") or []
+                if isinstance(issue, dict)
+            }
+            if issue_codes - proposal_only_issue_codes:
+                continue
+        elif str(item.get("status") or "").strip().lower() == "blocked":
             continue
-        results.append(inspect_dict_to_result(item))
+        recovered = item.get("recovered_candidate")
+        recovered_payload = (
+            recovered.get("payload") if isinstance(recovered, dict) else None
+        )
+        inspection_payload = dict(item)
+        if isinstance(recovered_payload, dict):
+            inspection_payload.update(recovered_payload)
+            inspection_payload["validation"] = {}
+            inspection_payload["issues"] = []
+        results.append(inspect_dict_to_result(inspection_payload))
     return _resolved_catalog_results_from_inspection_results(
         results,
         model_metadata=model_metadata,
@@ -350,64 +346,14 @@ def _merge_llm_catalog_discoveries(
             model_metadata=model_metadata,
             resolution_policy=resolution_policy,
         )
-    candidate_catalog = build_business_semantics_catalog_from_inspection(
-        project,
-        catalog_results,
-        base_catalog=base_catalog,
+    report = _empty_catalog_update_report()
+    report.update(
+        build_catalog_proposal_report(
+            catalog_results,
+            confirmed_catalog=base_catalog,
+        )
     )
-    changes = _catalog_entry_changes(base_catalog, candidate_catalog)
-    if not changes:
-        return _empty_catalog_update_report()
-
-    write_result = write_initial_business_semantics_catalog(
-        project,
-        overwrite=True,
-        dry_run=dry_run,
-        inspection_results=catalog_results,
-    )
-    written_names = sorted(write_result.get("written_names") or [])
-    update = {
-        "project": project,
-        "path": write_result.get("path"),
-        "paths": write_result.get("paths") or {},
-        "changed": True,
-        "updated": bool(write_result.get("updated")),
-        "dry_run": dry_run,
-        "change_count": len(changes),
-        "changes": changes,
-        "written_names": [] if dry_run else written_names,
-        "planned_written_names": written_names if dry_run else [],
-    }
-    return {
-        "catalog_update": update,
-        "catalog_change_count": len(changes),
-        "catalog_updates": [] if dry_run else changes,
-        "planned_catalog_updates": changes if dry_run else [],
-    }
-
-
-def _catalog_candidate_from_llm_result(
-    project: str,
-    *,
-    llm_result: dict[str, Any],
-    base_catalog: dict[str, Any],
-    model_metadata: dict[str, dict[str, Any]],
-    resolution_policy: LayerResolutionPolicy,
-    update_catalog: bool,
-) -> tuple[dict[str, Any], list[TableInspectResult]]:
-    resolved_results = _resolved_catalog_results_from_llm_result(
-        llm_result,
-        model_metadata=model_metadata,
-        resolution_policy=resolution_policy,
-    )
-    if not update_catalog:
-        return base_catalog, resolved_results
-    candidate = build_business_semantics_catalog_from_inspection(
-        project,
-        resolved_results,
-        base_catalog=base_catalog,
-    )
-    return candidate, resolved_results
+    return report
 
 
 def _apply_catalog_assignments_to_generated_models(
@@ -482,8 +428,13 @@ def _generate_model_mapping(
     *,
     asset: dict[str, Any] | None = None,
     asset_role: str = "",
+    execution_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    mapping = catalog_mapping_for_model(catalog, table_name, {})
+    mapping = catalog_mapping_for_model(
+        catalog,
+        table_name,
+        CanonicalSemanticPayload(),
+    )
     asset_layer = _generate_asset_role_layer(asset_role)
     mapped_layer = str(mapping.get("layer") or "").upper()
     name_layer = _layer_from_table_name(table_name)
@@ -513,10 +464,14 @@ def _generate_model_mapping(
     )
     layer = resolution.applied_layer
     table_type = resolution.table_type
-    execution = infer_execution_mapping(
-        table_name,
-        asset or {},
-        layer=layer,
+    execution = (
+        dict(execution_contract)
+        if execution_contract is not None
+        else infer_execution_mapping(
+            table_name,
+            asset or {},
+            layer=layer,
+        )
     )
     materialized = str(execution.get("materialized") or "").strip()
     mapping.update(
@@ -541,6 +496,8 @@ def _generate_model_update_payload(
     write_scope: str,
     source: str = "direct_generation",
 ) -> dict[str, Any]:
+    previous_layer = previous.get("operational_layer") or previous.get("layer")
+    updated_layer = updated.get("operational_layer") or updated.get("layer")
     business_changed = any(
         updated.get(key) != previous.get(key)
         for key in (
@@ -560,7 +517,7 @@ def _generate_model_update_payload(
         "changed": changed,
         "metadata_changed": any(
             updated.get(key) != previous.get(key)
-            for key in ("layer", "table_type")
+            for key in ("layer", "operational_layer", "table_type")
         ),
         "business_changed": business_changed,
         "metric_changed": False,
@@ -568,8 +525,8 @@ def _generate_model_update_payload(
         "updated": bool(changed and not dry_run),
         "write_scope": write_scope,
         "source": source,
-        "previous_layer": previous.get("layer"),
-        "layer": updated.get("layer"),
+        "previous_layer": previous_layer,
+        "layer": updated_layer,
         "previous_table_type": previous.get("table_type"),
         "table_type": updated.get("table_type"),
         "previous_data_domain": previous.get("data_domain"),
@@ -589,6 +546,7 @@ def plan_generate_model_metadata(
     *,
     replace_existing_models: bool,
     write_scope: str,
+    asset_manifest: GenerateAssetManifest | None = None,
 ) -> GenerateModelMetadataPlan:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
@@ -598,28 +556,38 @@ def plan_generate_model_metadata(
             "generate 冷启动必须替换现有 models，不能读取旧 model YAML"
         )
 
-    model_files = _model_files(project)
-    planned_deleted_model_files = [str(path) for path in model_files]
+    if asset_manifest is None:
+        preflight = build_generate_asset_preflight(project, catalog)
+        if not preflight.passed:
+            error_types = ", ".join(
+                sorted({error["type"] for error in preflight.errors})
+            )
+            raise ValueError(
+                f"generate asset preflight blocked: {error_types}"
+            )
+        asset_manifest = preflight.manifest
+    catalog = asset_manifest.catalog_data()
+
+    planned_deleted_model_files = [
+        str(path if path.is_absolute() else project_root() / path)
+        for path in map(Path, asset_manifest.existing_model_paths)
+    ]
     model_metadata: dict[str, dict[str, Any]] = {}
     model_paths: dict[str, Path] = {}
     model_updates = []
-    for table_name, asset in sorted(
-        _generate_model_table_assets(project).items()
-    ):
-        if not asset.ddl or not asset.ddl.exists:
-            continue
+    for manifest_asset in asset_manifest.assets:
+        table_name = manifest_asset.short_name
+        execution = manifest_asset.execution_contract()
         mapping = _generate_model_mapping(
             catalog,
             table_name,
-            asset=asset,
-            asset_role=_asset_role_from_generate_asset(project, asset),
+            asset_role=manifest_asset.asset_role,
+            execution_contract=execution,
         )
-        path = _generated_model_path_for_table(
-            project,
-            table_name,
-            mapping.get("layer"),
-        )
-        existing: dict[str, Any] = {}
+        path = Path(manifest_asset.target_model_path)
+        if not path.is_absolute():
+            path = project_root() / path
+        existing = CanonicalSemanticPayload()
         updated = _catalog_model_payload(
             table_name=table_name,
             existing=existing,
@@ -642,6 +610,7 @@ def plan_generate_model_metadata(
         model_paths=model_paths,
         model_updates=model_updates,
         planned_deleted_model_files=planned_deleted_model_files,
+        asset_manifest=asset_manifest,
     )
 
 
@@ -655,8 +624,22 @@ def _write_generated_model_metadata(
     refinement_updates: list[dict[str, Any]] | None = None,
     additional_rendered_files: dict[Path, str] | None = None,
     additional_deleted_files: list[Path] | None = None,
-) -> tuple[list[dict[str, Any]], list[str]]:
-    existing_model_files = _model_files(project) if delete_existing else []
+) -> tuple[
+    list[dict[str, Any]],
+    list[str],
+    MetadataPublicationOutcome,
+]:
+    existing_model_files = (
+        [
+            path if path.is_absolute() else project_root() / path
+            for path in map(
+                Path,
+                plan.write_targets.planned_deleted_model_files,
+            )
+        ]
+        if delete_existing
+        else []
+    )
     deleted_model_files: list[str] = []
 
     refinements_by_table = {
@@ -701,6 +684,11 @@ def _write_generated_model_metadata(
             )
         model_updates.append(update)
 
+    publication_outcome = MetadataPublicationOutcome(
+        formal_files_state="unchanged",
+        finalization_status="not_started",
+        recovery_required=False,
+    )
     if not dry_run:
         rendered_files = dict(additional_rendered_files or {})
         rendered_files.update(dict(rendered_models))
@@ -713,7 +701,8 @@ def _write_generated_model_metadata(
             if path.resolve() not in target_paths
         ]
         deleted_model_files.extend(str(path) for path in existing_model_files)
-        _transactional_publish_files(
+        publication_outcome = _transactional_publish_files(
+            project,
             rendered_files,
             delete_paths=(
                 obsolete_model_files + list(additional_deleted_files or [])
@@ -727,66 +716,44 @@ def _write_generated_model_metadata(
             _config.clear_business_semantics_cache()
             _config.clear_naming_config_cache()
 
-    return model_updates, deleted_model_files
+    return model_updates, deleted_model_files, publication_outcome
+
+
+def _candidate_model_publication_targets(
+    project: str,
+    plan: MetadataFlowPlan,
+    final_model_metadata: dict[str, dict[str, Any]],
+) -> tuple[list[str], list[tuple[str, str]], list[Path]]:
+    table_names = list(final_model_metadata)
+    declared_names = [
+        (table_name, str(metadata.get("name") or ""))
+        for table_name, metadata in final_model_metadata.items()
+    ]
+    paths = []
+    for table_name, metadata in final_model_metadata.items():
+        path = plan.write_targets.model_paths.get(table_name)
+        if path is None:
+            path = _generated_model_path_for_table(
+                project,
+                table_name,
+                metadata.get("layer"),
+            )
+        paths.append(path)
+    return table_names, declared_names, paths
 
 
 def _transactional_publish_files(
+    project: str,
     rendered_files: dict[Path, str],
     *,
     delete_paths: list[Path],
-) -> None:
-    """Publish a generated file set with rollback on ordinary exceptions."""
-    token = uuid4().hex
-    staged_files: list[tuple[Path, Path]] = []
-    backups: list[tuple[Path, Path]] = []
-    installed_paths: list[Path] = []
-    publication_succeeded = False
-    rendered_paths = set(rendered_files)
-    deletion_targets = [
-        path for path in delete_paths if path not in rendered_paths
-    ]
-    try:
-        for path, rendered in sorted(
-            rendered_files.items(), key=lambda item: str(item[0])
-        ):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            staged_path = path.with_name(f".{path.name}.{token}.staged")
-            staged_path.write_text(rendered, encoding=TEXT_ENCODING)
-            staged_files.append((staged_path, path))
-
-        targets = [path for _staged, path in staged_files]
-        targets.extend(path for path in deletion_targets if path.exists())
-        for path in targets:
-            if not path.exists():
-                continue
-            backup_path = path.with_name(f".{path.name}.{token}.backup")
-            path.replace(backup_path)
-            backups.append((backup_path, path))
-
-        for staged_path, path in staged_files:
-            staged_path.replace(path)
-            installed_paths.append(path)
-        publication_succeeded = True
-    except Exception:
-        for path in reversed(installed_paths):
-            if path.exists():
-                path.unlink()
-        for backup_path, path in reversed(backups):
-            if path.exists():
-                path.unlink()
-            if backup_path.exists():
-                backup_path.replace(path)
-        raise
-    finally:
-        for staged_path, _path in staged_files:
-            if staged_path.exists():
-                with suppress(OSError):
-                    staged_path.unlink()
-        if publication_succeeded:
-            for backup_path, _path in backups:
-                if backup_path.exists():
-                    with suppress(OSError):
-                        backup_path.unlink()
+) -> MetadataPublicationOutcome:
+    """Publish a generated file set through the shared durable transaction."""
+    return transactional_metadata_publication(
+        project,
+        rendered_files,
+        delete_paths=delete_paths,
+    )
 
 
 def _render_generated_catalog_files(

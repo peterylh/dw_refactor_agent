@@ -15,8 +15,10 @@ from dw_refactor_agent.execution.model_config import (
     ExecutionConfigError,
     SliceConfig,
     execution_config_for_model,
+    governed_execution_model,
     normalize_materialized,
     normalize_strategy,
+    require_runnable_execution,
     slice_config_from_mapping,
 )
 from dw_refactor_agent.lineage.identifiers import identifier_match_key
@@ -56,12 +58,14 @@ class ExecutionPlanner:
     ) -> TaskSpec:
         execution_model_name = str(model_name or job_name).strip()
         raw_model = self.model_metadata.get(
-            identifier_match_key(execution_model_name), {}
+            identifier_match_key(execution_model_name)
         )
-        raw_execution = execution_config_for_model(
-            execution_model_name,
-            raw_model,
+        raw_execution = (
+            execution_config_for_model(execution_model_name, raw_model)
+            if raw_model is not None
+            else {}
         )
+        require_runnable_execution(execution_model_name, raw_execution)
 
         materialized = normalize_materialized(
             execution_model_name,
@@ -340,18 +344,22 @@ class ExecutionPlanner:
                     )
                     or {}
                 )
-                if not isinstance(raw, dict):
-                    continue
-                name = raw.get("name") or model_path.stem
-                raw = dict(raw)
-                raw["name"] = name
+                if isinstance(raw, dict):
+                    raw = dict(raw)
+                    raw["name"] = raw.get("name") or model_path.stem
+                model = governed_execution_model(
+                    model_path.stem,
+                    raw,
+                    source=str(model_path),
+                )
+                name = model["name"]
                 name_key = identifier_match_key(name)
                 if name_key in metadata:
                     raise ExecutionConfigError(
                         "duplicate model metadata names under "
                         f"case-insensitive matching: {name!r}"
                     )
-                metadata[name_key] = raw
+                metadata[name_key] = model
         return metadata
 
     def _slice_config(

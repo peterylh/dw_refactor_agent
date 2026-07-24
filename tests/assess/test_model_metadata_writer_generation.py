@@ -23,6 +23,8 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     TableContext,
     TableInspector,
     TableInspectResult,
+    parse_response,
+    validate_inspection_result,
 )
 from tests.assess.model_metadata_writer_test_support import (
     _catalog_payload,
@@ -30,13 +32,14 @@ from tests.assess.model_metadata_writer_test_support import (
     _expected_pay_amt_1d_metric,
     _sample_dws_result,
     _sample_fact_result,
+    _structured_inspection_result,
     _write_catalog_project,
     _write_split_catalog,
 )
 
 
 def test_run_metadata_write_reuses_table_inspector(
-    monkeypatch, sample_lineage_data, isolated_writer_project
+    tmp_path, monkeypatch, sample_lineage_data, isolated_writer_project
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
@@ -55,12 +58,20 @@ def test_run_metadata_write_reuses_table_inspector(
             created_cache_files.append(cache_file)
 
         def inspect_batch(self, contexts):
-            if contexts and contexts[0].layer == "DWS":
-                seen_dws_contexts.extend(contexts)
+            seen_dws_contexts.extend(
+                context
+                for context in contexts
+                if context.layer == "DWS" and context.upstream_metric_groups
+            )
             results = []
             for ctx in contexts:
                 if ctx.table_name == "dwd_order_detail":
-                    results.append(_sample_fact_result())
+                    fact_result = _sample_fact_result()
+                    fact_result.business_process = "ORDER_DETAIL"
+                    fact_result.atomic_metrics[0]["business_process"] = (
+                        "ORDER_DETAIL"
+                    )
+                    results.append(fact_result)
                 elif ctx.table_name == "dws_store_sales_daily":
                     results.append(_sample_dws_result())
                 else:
@@ -74,10 +85,24 @@ def test_run_metadata_write_reuses_table_inspector(
                             reasoning_steps=[],
                         )
                     )
-            return results
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module, "load_lineage_data", lambda project: sample_lineage_data
+    )
+    _write_split_catalog(
+        tmp_path / isolated_writer_project,
+        isolated_writer_project,
+        _catalog_payload(
+            processes=[
+                {
+                    "code": "ORDER_DETAIL",
+                    "name": "订单明细",
+                    "data_domain": "04",
+                    "business_area": "SHOP",
+                }
+            ]
+        ),
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
     original_pipeline = writer_module.run_inspection_pipeline
@@ -151,6 +176,11 @@ def test_run_metadata_write_reuses_table_inspector(
     assert updates_by_table["dwd_customer"]["updated"] is False
     assert updates_by_table["dws_store_sales_daily"]["table"] == (
         "dws_store_sales_daily"
+    )
+    assert seen_dws_contexts, next(
+        decision
+        for decision in result["local_section_decisions"]
+        if decision["table"] == "dwd_order_detail"
     )
     assert seen_dws_contexts[0].upstream_metric_groups["dwd_order_detail"] == {
         "atomic_metrics": ["pay_amt"],
@@ -353,6 +383,7 @@ def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
 def test_model_metadata_writer_cli_fails_when_generate_publication_is_blocked(
     monkeypatch,
     tmp_path,
+    capsys,
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
@@ -394,7 +425,8 @@ def test_model_metadata_writer_cli_fails_when_generate_publication_is_blocked(
     with pytest.raises(SystemExit) as exc_info:
         writer_module.main()
 
-    assert "发布被阻断" in str(exc_info.value)
+    assert exc_info.value.code == 1
+    assert "发布状态: blocked" in capsys.readouterr().err
     output_path = (
         project_dir / "artifacts" / "assessment" / "model_metadata_result.json"
     )
@@ -457,6 +489,20 @@ def test_run_generate_model_metadata_dry_run_missing_catalog_uses_in_memory_skel
     ]
     assert result["model_change_count"] == 1
     assert result["model_update_count"] == 0
+    assert result["candidate_resolution"]["status"] == "quarantined"
+    candidate = result["candidate_models"]["dwd_order_detail"]
+    assert candidate["version"] == 3
+    assert candidate["governance"]["withheld_sections"] == [
+        "classification",
+        "business_semantics",
+        "entities",
+        "grain",
+        "metrics",
+    ]
+    assert (
+        result["publication"]["transition_plan"]["would_publish_status"]
+        == "published_with_quarantine"
+    )
     assert str(existing_model) in result["planned_deleted_model_files"]
     assert existing_model.exists()
     assert not (project_dir / "business_taxonomy.yaml").exists()
@@ -538,7 +584,7 @@ def test_run_generate_model_metadata_dry_run_llm_uses_generated_model_baseline(
 
         def inspect_batch(self, contexts):
             seen_contexts.extend(contexts)
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -556,6 +602,7 @@ def test_run_generate_model_metadata_dry_run_llm_uses_generated_model_baseline(
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module, "load_lineage_data", lambda _: lineage_data
@@ -720,24 +767,22 @@ def _seed_resumable_checkpoint(
     project_dir,
     plan,
     *,
-    resume_eligible=True,
+    catalog_snapshot_hash="",
+    asset_manifest_hash="",
 ):
     context = _checkpoint_context()
-    inspector = TableInspector(api_key="test")
-    result = TableInspectResult(
-        table_name=context.table_name,
-        declared_layer=context.layer,
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
+    inspector = TableInspector(
+        api_key="test",
+        catalog_snapshot_hash=catalog_snapshot_hash,
+        asset_manifest_hash=asset_manifest_hash,
     )
-    result.context_hash = inspector._compute_hash(context)
-    result.resume_eligible = resume_eligible
+    result = _lossless_checkpoint_result(context, inspector)
     checkpoint = GenerateModelCheckpoint(
         project,
         project_dir=project_dir,
         plan=plan,
+        catalog_snapshot_hash=catalog_snapshot_hash,
+        asset_manifest_hash=asset_manifest_hash,
     )
     checkpoint.write_inspection_result(result)
     checkpoint.close()
@@ -776,6 +821,18 @@ def _dwd_fact_inspection_response(entity_code="TEST_ENTITY"):
             ]
         }
     )
+
+
+def _lossless_checkpoint_result(context, inspector):
+    result = parse_response(
+        context.table_name,
+        json.loads(_dwd_fact_inspection_response()),
+        context.layer,
+    )
+    result.context_hash = inspector._compute_hash(context)
+    result.catalog_snapshot_hash = inspector.catalog_snapshot_hash
+    result.asset_manifest_hash = inspector.asset_manifest_hash
+    return result
 
 
 def test_generate_checkpoint_rejects_overlapping_project_run(
@@ -842,6 +899,64 @@ def test_generate_checkpoint_records_processed_inspection_status(
     ]
 
 
+def test_generate_checkpoint_resumes_non_retryable_semantic_quarantine(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_quarantine_resume"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    context = _checkpoint_context()
+    inspector = TableInspector(
+        api_key="test",
+        max_retries=0,
+        validate_publication_contract=True,
+    )
+    result = _lossless_checkpoint_result(context, inspector)
+    validate_inspection_result(
+        result,
+        context,
+        validate_publication_contract=True,
+    )
+    first = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+
+    first.write_inspection_result(result)
+
+    assert first.report()["resume_candidate_kind_counts"] == {
+        "semantic_quarantine": 1
+    }
+    first.close()
+
+    second = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    resumed = TableInspector(
+        api_key="test",
+        max_retries=0,
+        resume_cache=second.resume_cache(),
+        validate_publication_contract=True,
+    )
+    api = pytest.fail
+    monkeypatch.setattr(
+        resumed,
+        "_call_api",
+        lambda _prompt: api("checkpoint quarantine unexpectedly called API"),
+    )
+
+    replayed = resumed.inspect(context)
+
+    assert replayed.reuse_source == "checkpoint"
+    assert replayed.status == "blocked"
+    assert [issue.code for issue in replayed.issues] == [
+        "business_process_missing"
+    ]
+    second.close()
+
+
 def test_generate_checkpoint_resumes_successful_prompt_variants_only(
     tmp_path, monkeypatch
 ):
@@ -892,15 +1007,7 @@ def test_generate_checkpoint_resumes_successful_prompt_variants_only(
         plan=plan,
     )
     for context in (base_context, enriched_context):
-        result = TableInspectResult(
-            table_name=context.table_name,
-            declared_layer=context.layer,
-            inferred_layer="DWD",
-            table_type="fact",
-            confidence=0.9,
-            reasoning_steps=[],
-        )
-        result.context_hash = seed_inspector._compute_hash(context)
+        result = _lossless_checkpoint_result(context, seed_inspector)
         first.write_inspection_result(result)
     blocked = TableInspectResult(
         table_name=failed_context.table_name,
@@ -1041,16 +1148,8 @@ def test_generate_checkpoint_invalidates_publication_rejected_variant(
         cache_file=cache_file,
         max_retries=0,
     )
-    result = TableInspectResult(
-        table_name=context.table_name,
-        declared_layer=context.layer,
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    context_hash = seed_inspector._compute_hash(context)
-    result.context_hash = context_hash
+    result = _lossless_checkpoint_result(context, seed_inspector)
+    context_hash = result.context_hash
     seed_inspector._store_cached_result(
         context.table_name,
         context_hash,
@@ -1091,6 +1190,9 @@ def test_generate_checkpoint_invalidates_publication_rejected_variant(
     assert resume_cache["dwd_first"] == {
         "variants": {},
         "invalid_context_hashes": [context_hash],
+        "invalidation_reasons": {
+            context_hash: "publication_rejected",
+        },
     }
     resumed_inspector = TableInspector(
         api_key="test",
@@ -1120,15 +1222,8 @@ def test_generate_checkpoint_keeps_variant_for_execution_publication_error(
     project = "generate_checkpoint_execution_rejection"
     project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
     context = _checkpoint_context()
-    result = TableInspectResult(
-        table_name=context.table_name,
-        declared_layer=context.layer,
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    result.context_hash = TableInspector(api_key="test")._compute_hash(context)
+    inspector = TableInspector(api_key="test")
+    result = _lossless_checkpoint_result(context, inspector)
     first = GenerateModelCheckpoint(
         project,
         project_dir=project_dir,
@@ -1208,17 +1303,46 @@ def test_generate_checkpoint_discards_corrupt_resume_sidecar(
     recovered.close()
 
 
-def test_generate_checkpoint_retries_non_cacheable_fallback_result(
+def test_generate_checkpoint_safely_invalidates_legacy_manifest(
     tmp_path, monkeypatch
 ):
-    project = "generate_checkpoint_retry_fallback"
+    project = "generate_checkpoint_legacy_manifest"
     project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
-    _seed_resumable_checkpoint(
+    _seed_resumable_checkpoint(project, project_dir, plan)
+    checkpoint_dir = project_dir / "mid_checkpoints"
+    manifest_path = checkpoint_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["version"] = 4
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    recovered = GenerateModelCheckpoint(
         project,
-        project_dir,
-        plan,
-        resume_eligible=False,
+        project_dir=project_dir,
+        plan=plan,
     )
+
+    assert recovered.resume_cache() == {}
+    assert not list(checkpoint_dir.glob("*.inspection.json"))
+    assert recovered.report()["resumed_from_run_id"] is None
+    recovered.close()
+
+
+def test_generate_checkpoint_rejects_legacy_non_resumable_variant(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_legacy_non_resumable"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    _seed_resumable_checkpoint(project, project_dir, plan)
+    manifest_path = project_dir / "mid_checkpoints" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["version"] = 5
+    variant = next(
+        iter(manifest["tables"]["dwd_first"]["inspection_variants"].values())
+    )
+    variant["resume_eligible"] = False
+    variant.pop("reuse_kind", None)
+    variant.pop("invalidation_reason", None)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     recovered = GenerateModelCheckpoint(
         project,
@@ -1229,6 +1353,9 @@ def test_generate_checkpoint_retries_non_cacheable_fallback_result(
     resume_entry = recovered.resume_cache()["dwd_first"]
     assert resume_entry["variants"] == {}
     assert len(resume_entry["invalid_context_hashes"]) == 1
+    assert set(resume_entry["invalidation_reasons"].values()) == {
+        "legacy_marked_non_resumable"
+    }
     assert recovered.report()["resume_candidate_variant_count"] == 0
     recovered.close()
 
@@ -1240,7 +1367,18 @@ def test_run_generate_model_metadata_passes_checkpoint_resume_cache(
 
     project = "generate_checkpoint_resume_wiring"
     project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
-    seed = _seed_resumable_checkpoint(project, project_dir, plan)
+    catalog = writer_module.load_business_semantics_catalog(project)
+    preflight = writer_module.build_generate_asset_preflight(
+        project,
+        catalog,
+    )
+    seed = _seed_resumable_checkpoint(
+        project,
+        project_dir,
+        plan,
+        catalog_snapshot_hash=preflight.manifest.catalog_snapshot_hash,
+        asset_manifest_hash=preflight.manifest.manifest_hash,
+    )
     seen = {}
 
     def fake_metadata_write(*args, **kwargs):
@@ -1535,10 +1673,36 @@ def test_generate_reports_checkpoint_finalization_failure_after_publish(
     def fail_finish(self, **kwargs):
         raise OSError("simulated final manifest failure")
 
+    inspected = _structured_inspection_result(
+        TableInspectResult(
+            table_name="dwd_first",
+            declared_layer="DWD",
+            inferred_layer="DWD",
+            table_type="fact",
+            confidence=0.9,
+            reasoning_steps=[],
+        )
+    )
+    inspected.business_process = "UNCONFIRMED"
+    _effective, local_decision = (
+        writer_module.prepare_inspection_for_propagation(
+            inspected,
+            metadata={
+                "name": "dwd_first",
+                "layer": "DWD",
+                "table_type": "fact",
+            },
+            catalog=_catalog_payload(),
+        )
+    )
     monkeypatch.setattr(
         writer_module,
         "run_metadata_write",
-        lambda *args, **kwargs: {"model_updates": [], "tables": []},
+        lambda *args, **kwargs: {
+            "model_updates": [],
+            "tables": [writer_module.inspect_result_to_dict(inspected)],
+            "local_section_decisions": [local_decision.to_dict()],
+        },
     )
     monkeypatch.setattr(
         writer_module,
@@ -1558,7 +1722,7 @@ def test_generate_reports_checkpoint_finalization_failure_after_publish(
         update_catalog=False,
     )
 
-    assert result["publication"]["status"] == "published"
+    assert result["publication"]["status"] == "published_with_quarantine"
     assert result["checkpoint"]["status"] == "finalization_failed"
     assert "simulated final manifest failure" in result["checkpoint"]["error"]
     assert (project_dir / "mid" / "models" / "dwd_first.yaml").exists()
@@ -1592,8 +1756,15 @@ def test_run_generate_model_metadata_missing_catalog_writes_skeleton_and_models(
     model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
     model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
     assert result["model_update_count"] == 1
+    assert result["publication"]["status"] == "published_with_quarantine"
     assert model["name"] == "dwd_order_detail"
-    assert model["layer"] == "DWD"
+    assert model["version"] == 3
+    assert model["operational_layer"] == "DWD"
+    assert "layer" not in model
+    assert "table_type" not in model
+    assert set(model["governance"]["withheld_sections"]) == set(
+        config.MODEL_SECTIONS
+    )
     assert model["execution"] == {
         "materialized": "full",
         "full_refresh_strategy": "replace_all",
@@ -1627,7 +1798,7 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
     )
     daily_sql = (
         "SET @etl_date = COALESCE(@etl_date, CURDATE());\n"
-        "TRUNCATE TABLE demo.staging_cleanup;\n"
+        "CREATE TEMPORARY TABLE demo.staging_cleanup (id BIGINT);\n"
         "DELETE FROM demo.{table} "
         "WHERE processing_status = 1 "
         "AND business_date = CAST(@etl_date AS DATE);\n"
@@ -1655,7 +1826,11 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         project,
-        {"dir": project, "naming_config": "naming_config.yaml"},
+        {
+            "dir": project,
+            "db": "demo",
+            "naming_config": "naming_config.yaml",
+        },
     )
 
     result = run_generate_model_metadata(project, dry_run=False)
@@ -1664,7 +1839,7 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
         for path in (project_dir / "mid" / "models").glob("*.yaml")
     }
 
-    assert result["publication"]["status"] == "published"
+    assert result["publication"]["status"] == "published_with_quarantine"
     assert models["dwd_full"]["execution"] == {
         "materialized": "full",
         "full_refresh_strategy": "replace_all",
@@ -2067,7 +2242,7 @@ def test_run_generate_model_metadata_blocks_unresolved_execution_contract(
     )
     (task_dir / "dwd_order_detail.sql").write_text(
         "SET @retry_limit = 3;\n"
-        "INSERT INTO demo.dwd_order_detail SELECT 1, CURRENT_DATE;\n",
+        "INSERT INTO dwd_order_detail SELECT 1, CURRENT_DATE;\n",
         encoding="utf-8",
     )
     model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
@@ -2125,21 +2300,20 @@ def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
         }
     ]
     assert result["candidate_model_summary"] == {
-        "model_count": 1,
+        "model_count": 0,
         "metric_count": 0,
         "metric_table_count": 0,
         "entity_table_count": 0,
         "grain_table_count": 0,
-        "layer_counts": {"DWD": 1},
+        "layer_counts": {},
+        "quarantined_model_count": 0,
     }
     assert result["published_model_summary"]["model_count"] == 1
     assert result["candidate_catalog_summary"] == {
         "business_process_count": 0,
         "semantic_subject_count": 0,
     }
-    assert result["candidate_models"]["dwd_order_detail"]["execution"] == {
-        "materialized": "incremental"
-    }
+    assert result["candidate_models"] == {}
     assert saved["execution"] == {"materialized": "full"}
 
 
@@ -2404,6 +2578,7 @@ def test_generate_publication_allows_fact_foreign_entities_without_relationship(
         "status": "passed",
         "error_count": 0,
         "errors": [],
+        "issues": [],
         "blocked_tables": [],
         "reinspection_tables": [],
     }
@@ -2543,43 +2718,6 @@ def test_generate_publication_validates_entity_keys_and_grain_references():
     assert validation["reinspection_tables"] == ["dim_customer"]
 
 
-def test_generate_file_set_publication_rolls_back_on_replace_failure(
-    tmp_path, monkeypatch
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    catalog_path = tmp_path / "business_processes.yaml"
-    model_path = tmp_path / "dwd_order_detail.yaml"
-    catalog_path.write_text("catalog: old\n", encoding="utf-8")
-    model_path.write_text("model: old\n", encoding="utf-8")
-    original_replace = Path.replace
-    staged_replace_count = 0
-
-    def flaky_replace(self, target):
-        nonlocal staged_replace_count
-        if self.name.endswith(".staged"):
-            staged_replace_count += 1
-            if staged_replace_count == 2:
-                raise OSError("simulated replacement failure")
-        return original_replace(self, target)
-
-    monkeypatch.setattr(Path, "replace", flaky_replace)
-
-    with pytest.raises(OSError, match="simulated replacement failure"):
-        writer_module._transactional_publish_files(
-            {
-                catalog_path: "catalog: new\n",
-                model_path: "model: new\n",
-            },
-            delete_paths=[],
-        )
-
-    assert catalog_path.read_text(encoding="utf-8") == "catalog: old\n"
-    assert model_path.read_text(encoding="utf-8") == "model: old\n"
-    assert list(tmp_path.glob(".*.staged")) == []
-    assert list(tmp_path.glob(".*.backup")) == []
-
-
 def test_generate_asset_collection_does_not_read_existing_model_yaml(
     tmp_path, monkeypatch
 ):
@@ -2623,6 +2761,8 @@ def test_run_generate_model_metadata_uses_asset_role_for_prefixless_base(
     (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(parents=True)
     (project_dir / "mid" / "ddl").mkdir(parents=True)
     (project_dir / "ads" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir(parents=True)
     (
         project_dir
         / "ods"
@@ -2640,6 +2780,15 @@ def test_run_generate_model_metadata_uses_asset_role_for_prefixless_base(
     )
     (project_dir / "ads" / "ddl" / "order_dashboard.sql").write_text(
         "CREATE TABLE order_dashboard (id BIGINT);\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "order_detail.sql").write_text(
+        "TRUNCATE TABLE order_detail;\nINSERT INTO order_detail SELECT 1;\n",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "order_dashboard.sql").write_text(
+        "TRUNCATE TABLE order_dashboard;\n"
+        "INSERT INTO order_dashboard SELECT 1;\n",
         encoding="utf-8",
     )
     (tmp_path / "naming_config.yaml").write_text(

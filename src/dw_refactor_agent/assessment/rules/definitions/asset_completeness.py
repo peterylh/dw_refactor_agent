@@ -8,6 +8,7 @@ from dw_refactor_agent.assessment.project_facts.asset_catalog import (
 )
 from dw_refactor_agent.assessment.result_model import make_check
 from dw_refactor_agent.assessment.rules.engine.base import AssessRule
+from dw_refactor_agent.lineage.identifiers import table_identity_match_key
 
 
 class _AssetCompletenessRule(AssessRule):
@@ -61,7 +62,10 @@ class AssetExecutableDdlHasTaskRule(_AssetCompletenessRule):
         if (
             target["kind"] != "table"
             or not target["has_ddl"]
-            or not _asset_requires_task(target["asset"])
+            or not _asset_requires_task(
+                target["asset"],
+                rule_context=rule_context,
+            )
         ):
             return None
         return self.check(
@@ -215,5 +219,24 @@ ASSET_COMPLETENESS_RULE_CLASSES = [
 ]
 
 
-def _asset_requires_task(asset: TableAsset) -> bool:
-    return asset.layer.upper() != "ODS"
+def _asset_requires_task(
+    asset: TableAsset,
+    *,
+    rule_context: dict,
+) -> bool:
+    if asset.layer.upper() == "ODS":
+        return False
+    table_identity = (
+        asset.ddl.full_name
+        if asset.ddl is not None and asset.ddl.full_name
+        else asset.name
+    )
+    identity = table_identity_match_key(
+        table_identity,
+        default_catalog=rule_context.get("default_catalog", "internal"),
+        default_db=rule_context.get("default_database", ""),
+    )
+    return identity not in rule_context.get(
+        "external_taskless_identity_keys",
+        frozenset(),
+    )

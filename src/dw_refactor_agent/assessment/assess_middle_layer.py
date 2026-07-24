@@ -263,15 +263,32 @@ def assess(
         only_rules=only_rules,
     )
 
+    from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+        read_consistent_metadata_snapshot,
+    )
     from dw_refactor_agent.config import (
+        clear_business_semantics_cache,
+        clear_model_metadata_cache,
+        clear_naming_config_cache,
         get_business_domain_config,
         get_naming_config,
         load_model_metadata,
     )
 
-    nc = get_naming_config(project)
-    model_metadata = load_model_metadata(project)
-    business_domain_config = get_business_domain_config(project)
+    def load_assessment_metadata():
+        clear_model_metadata_cache()
+        clear_business_semantics_cache()
+        clear_naming_config_cache()
+        return (
+            get_naming_config(project),
+            load_model_metadata(project),
+            get_business_domain_config(project),
+        )
+
+    (
+        (nc, model_metadata, business_domain_config),
+        _formal_snapshot,
+    ) = read_consistent_metadata_snapshot(project, load_assessment_metadata)
 
     data = (
         lineage_data
@@ -377,7 +394,14 @@ def assess(
     dimensions = {key: dimensions[key] for key in dimension_keys}
     selected_weight_total = sum(weights[key] for key in dimension_keys)
     overall_score = round(
-        sum(weights[key] * dimensions[key]["score"] for key in dimension_keys)
+        sum(
+            weights[key]
+            * dimensions[key].get(
+                "effective_score",
+                dimensions[key]["score"],
+            )
+            for key in dimension_keys
+        )
         / selected_weight_total,
         1,
     )
@@ -388,6 +412,15 @@ def assess(
         weights=weights,
         dimensions=dimensions,
     )
+    incomplete_dimensions = [
+        key
+        for key in dimension_keys
+        if dimensions[key].get("complete") is False
+    ]
+    if incomplete_dimensions:
+        result["complete"] = False
+        result["status"] = "quarantined"
+        result["incomplete_dimensions"] = incomplete_dimensions
     if scope:
         result["scope"] = scope
     if scope_plan:

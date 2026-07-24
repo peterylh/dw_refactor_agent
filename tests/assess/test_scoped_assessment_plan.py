@@ -17,7 +17,11 @@ def _context():
         project="shop",
         tables=tables,
         models={
-            table["name"]: {"name": table["name"], "layer": table["layer"]}
+            table["name"]: {
+                "version": 2,
+                "name": table["name"],
+                "layer": table["layer"],
+            }
             for table in tables
         },
         edges=[

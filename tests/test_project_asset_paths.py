@@ -59,6 +59,7 @@ def test_load_project_config_maps_warehouse_yaml_to_runtime_shape(tmp_path):
 
     assert project_config == {
         "demo": {
+            "warehouse_config_path": "warehouses/demo/warehouse.yaml",
             "dir": "warehouses/demo",
             "catalog": "internal",
             "db": "demo_dm",

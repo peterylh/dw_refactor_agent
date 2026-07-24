@@ -7,7 +7,8 @@ from collections import defaultdict
 
 from dw_refactor_agent.config import (
     TEXT_ENCODING,
-    determine_layer,
+    determine_operational_layer,
+    get_operational_layer,
     lineage_data_path,
 )
 from dw_refactor_agent.lineage.identifiers import (
@@ -284,12 +285,25 @@ def build_table_layer_map(
     model_metadata: dict | None = None,
 ) -> dict:
     layers = {}
+    metadata_by_key = {}
+    for model_name, metadata in (model_metadata or {}).items():
+        key = identifier_match_key(model_name)
+        if key in metadata_by_key:
+            raise ValueError(
+                "model metadata names collide under case-insensitive lookup: "
+                f"{model_name!r}"
+            )
+        metadata_by_key[key] = metadata
     for table in tables:
         name = str(table.get("name") or "")
         if not name:
             continue
         short_name = name.split(".")[-1]
-        metadata = (model_metadata or {}).get(short_name) or {}
-        layer = metadata.get("layer") or determine_layer(short_name, project)
+        metadata = metadata_by_key.get(identifier_match_key(short_name))
+        layer = (
+            get_operational_layer(metadata)
+            if metadata is not None
+            else determine_operational_layer(short_name, project)
+        )
         layers[name] = str(layer or "OTHER").upper()
     return layers

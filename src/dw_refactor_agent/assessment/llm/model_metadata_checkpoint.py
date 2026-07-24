@@ -16,20 +16,32 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from dw_refactor_agent.assessment.llm.catalog_proposals import (
+    CATALOG_PROPOSAL_SCHEMA_VERSION,
+)
+from dw_refactor_agent.assessment.llm.inspection_cache_policy import (
+    ISSUE_SCHEMA_VERSION,
+    PARSER_SCHEMA_VERSION,
+    InspectionCachePolicy,
+    InvalidInspectionCacheError,
+    current_policy_versions,
+    inspection_reuse_decision,
+)
 from dw_refactor_agent.assessment.llm.metadata_flow import MetadataFlowPlan
 from dw_refactor_agent.assessment.llm.model_metadata_updates import (
     update_model_yaml,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspectResult,
+    cache_result_digest,
     dict_to_result,
     result_to_cache_dict,
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
 MID_LAYERS = {"DWD", "DWS", "DIM"}
-CHECKPOINT_MANIFEST_VERSION = 3
-RESUMABLE_CHECKPOINT_MANIFEST_VERSIONS = {2, 3}
+CHECKPOINT_MANIFEST_VERSION = 6
+RESUMABLE_CHECKPOINT_MANIFEST_VERSIONS = {5, 6}
 MAX_CHECKPOINT_VARIANTS_PER_TABLE = 4
 MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE = 8
 INSPECTION_RESULT_SUFFIX = ".inspection.json"
@@ -71,10 +83,14 @@ class GenerateModelCheckpoint:
         project_dir: Path,
         plan: MetadataFlowPlan,
         resume_enabled: bool = True,
+        catalog_snapshot_hash: str = "",
+        asset_manifest_hash: str = "",
     ) -> None:
         self.project = project
         self.project_dir = Path(project_dir)
         self.plan = plan
+        self.catalog_snapshot_hash = str(catalog_snapshot_hash or "")
+        self.asset_manifest_hash = str(asset_manifest_hash or "")
         self.run_id = _checkpoint_run_id()
         self.root = self.project_dir / "mid_checkpoints"
         self.manifest_path = self.root / "manifest.json"
@@ -103,8 +119,20 @@ class GenerateModelCheckpoint:
                 "run_id": self.run_id,
                 "resumed_from_run_id": resumed_from_run_id,
                 "resume_enabled": bool(resume_enabled),
+                **current_policy_versions(),
+                "catalog_snapshot_hash": self.catalog_snapshot_hash,
+                "asset_manifest_hash": self.asset_manifest_hash,
                 "status": "running",
                 "published": False,
+                "catalog_proposal_audit": {
+                    "schema_version": CATALOG_PROPOSAL_SCHEMA_VERSION,
+                    "catalog_snapshot_hash": self.catalog_snapshot_hash,
+                    "proposals": [],
+                    "proposal_count": 0,
+                    "conflicts": [],
+                    "conflict_count": 0,
+                    "generated_at": None,
+                },
                 "created_at": _utc_timestamp(),
                 "updated_at": _utc_timestamp(),
                 "table_count": sum(
@@ -204,34 +232,60 @@ class GenerateModelCheckpoint:
                 continue
             if not isinstance(raw_entry, dict):
                 continue
-            variants, rejected_hashes = self._validated_resume_variants(
+            (
+                variants,
+                rejected_hashes,
+                rejected_reasons,
+            ) = self._validated_resume_variants(
                 table_name,
                 raw_entry.get("inspection_variants"),
             )
             invalidated_hashes = self._normalized_context_hashes(
                 raw_entry.get("invalidated_context_hashes")
             )
+            invalidation_reasons = self._normalized_invalidation_reasons(
+                raw_entry.get("resume_invalidation_reasons")
+            )
             for context_hash in rejected_hashes:
                 if context_hash not in invalidated_hashes:
                     invalidated_hashes.append(context_hash)
+                invalidation_reasons.setdefault(
+                    context_hash,
+                    rejected_reasons.get(
+                        context_hash,
+                        "checkpoint_variant_invalid",
+                    ),
+                )
             for context_hash in variants:
                 with suppress(ValueError):
                     invalidated_hashes.remove(context_hash)
+                invalidation_reasons.pop(context_hash, None)
             invalidated_hashes = invalidated_hashes[
                 -MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE:
             ]
+            invalidation_reasons = {
+                context_hash: invalidation_reasons.get(
+                    context_hash,
+                    "previously_invalidated",
+                )
+                for context_hash in invalidated_hashes
+            }
             if not variants and not invalidated_hashes:
                 continue
             variants = dict(
                 list(variants.items())[-MAX_CHECKPOINT_VARIANTS_PER_TABLE:]
             )
             cache_variants = {
-                context_hash: {"result": item["result"]}
+                context_hash: {
+                    "result": item["result"],
+                    "content_sha256": cache_result_digest(item["result"]),
+                }
                 for context_hash, item in variants.items()
             }
             resume_cache[table_name] = {
                 "variants": cache_variants,
                 "invalid_context_hashes": invalidated_hashes,
+                "invalidation_reasons": invalidation_reasons,
             }
             variant_metadata = {
                 context_hash: item["metadata"]
@@ -256,6 +310,7 @@ class GenerateModelCheckpoint:
                 "revision": int(raw_entry.get("revision") or 0),
                 "inspection_variants": variant_metadata,
                 "invalidated_context_hashes": invalidated_hashes,
+                "resume_invalidation_reasons": invalidation_reasons,
                 "resumed_context_hashes": [],
                 "active_context_hash": active_context_hash,
             }
@@ -274,6 +329,13 @@ class GenerateModelCheckpoint:
         manifest: dict[str, Any],
         resume_enabled: bool,
     ) -> bool:
+        versions = current_policy_versions()
+        policy_versions_present = all(
+            isinstance(manifest.get(name), int)
+            and not isinstance(manifest.get(name), bool)
+            and manifest.get(name) >= 0
+            for name in versions
+        )
         return bool(
             resume_enabled
             and manifest.get("version")
@@ -281,23 +343,38 @@ class GenerateModelCheckpoint:
             and manifest.get("project") == self.project
             and manifest.get("mode") == "generate"
             and isinstance(manifest.get("tables"), dict)
+            and policy_versions_present
+            and manifest.get("parser_schema_version") == PARSER_SCHEMA_VERSION
+            and manifest.get("issue_schema_version") == ISSUE_SCHEMA_VERSION
+            and manifest.get("catalog_snapshot_hash")
+            == self.catalog_snapshot_hash
+            and manifest.get("asset_manifest_hash") == self.asset_manifest_hash
         )
 
     def _validated_resume_variants(
         self,
         table_name: str,
         raw_variants: Any,
-    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    ) -> tuple[dict[str, dict[str, Any]], list[str], dict[str, str]]:
         if not isinstance(raw_variants, dict):
-            return {}, []
+            return {}, [], {}
         variants: dict[str, dict[str, Any]] = {}
         rejected_hashes: list[str] = []
+        rejected_reasons: dict[str, str] = {}
         for context_hash, raw_metadata in raw_variants.items():
             context_hash = str(context_hash or "")
             if not context_hash:
                 continue
             rejected_hashes.append(context_hash)
+            rejected_reasons[context_hash] = "checkpoint_variant_invalid"
             if not isinstance(raw_metadata, dict):
+                rejected_reasons[context_hash] = "variant_metadata_invalid"
+                continue
+            if raw_metadata.get("resume_eligible") is False:
+                rejected_reasons[context_hash] = str(
+                    raw_metadata.get("invalidation_reason")
+                    or "legacy_marked_non_resumable"
+                )
                 continue
             result_name = str(raw_metadata.get("result_name") or "")
             expected_digest = str(raw_metadata.get("content_sha256") or "")
@@ -308,27 +385,69 @@ class GenerateModelCheckpoint:
                 or not expected_digest
                 or self._file_digest(result_path) != expected_digest
             ):
+                rejected_reasons[context_hash] = "sidecar_missing_or_corrupt"
                 continue
             try:
                 payload = json.loads(
                     result_path.read_text(encoding=TEXT_ENCODING)
                 )
             except (OSError, ValueError):
+                rejected_reasons[context_hash] = "sidecar_json_invalid"
                 continue
             if not isinstance(payload, dict):
+                rejected_reasons[context_hash] = "sidecar_json_invalid"
                 continue
-            result = dict_to_result(
-                payload,
-                table_name=table_name,
-                declared_layer=str(payload.get("declared_layer") or ""),
-            )
+            try:
+                cache_policy = InspectionCachePolicy.from_dict(
+                    payload.get("cache_policy")
+                )
+                if not cache_policy.matches_inputs(
+                    context_hash=context_hash,
+                    catalog_snapshot_hash=self.catalog_snapshot_hash,
+                    asset_manifest_hash=self.asset_manifest_hash,
+                ):
+                    rejected_reasons[context_hash] = (
+                        "input_fingerprint_changed"
+                    )
+                    continue
+                result = dict_to_result(
+                    payload,
+                    table_name=table_name,
+                    declared_layer=str(payload.get("declared_layer") or ""),
+                )
+            except (
+                InvalidInspectionCacheError,
+                TypeError,
+                ValueError,
+            ):
+                rejected_reasons[context_hash] = "payload_or_policy_invalid"
+                continue
             if (
                 result.table_name != table_name
-                or result.status == "blocked"
-                or result.confidence
-                < self.plan.resolution_policy.min_llm_confidence
-                or raw_metadata.get("resume_eligible") is False
+                or result.context_hash != context_hash
+                or result.catalog_snapshot_hash != self.catalog_snapshot_hash
+                or result.asset_manifest_hash != self.asset_manifest_hash
+                or result.parsed_candidate is None
+                or result.parsed_candidate.table_name != table_name
+                or (
+                    result.raw_response is not None
+                    and (
+                        result.raw_response.table_name != table_name
+                        or result.parsed_candidate.raw_response_hash
+                        != result.raw_response.content_hash
+                    )
+                )
             ):
+                rejected_reasons[context_hash] = "payload_identity_mismatch"
+                continue
+            reuse = inspection_reuse_decision(
+                result,
+                min_confidence=(
+                    self.plan.resolution_policy.min_llm_confidence
+                ),
+            )
+            if not reuse.eligible:
+                rejected_reasons[context_hash] = reuse.reason
                 continue
             metadata = dict(raw_metadata)
             metadata.update(
@@ -337,6 +456,9 @@ class GenerateModelCheckpoint:
                     "content_sha256": expected_digest,
                     "inspection_status": result.status,
                     "confidence": result.confidence,
+                    "resume_eligible": True,
+                    "reuse_kind": reuse.kind,
+                    "invalidation_reason": "",
                 }
             )
             variants[context_hash] = {
@@ -344,7 +466,8 @@ class GenerateModelCheckpoint:
                 "metadata": metadata,
             }
             rejected_hashes.remove(context_hash)
-        return variants, rejected_hashes
+            rejected_reasons.pop(context_hash, None)
+        return variants, rejected_hashes, rejected_reasons
 
     @staticmethod
     def _normalized_context_hashes(raw_hashes: Any) -> list[str]:
@@ -356,6 +479,16 @@ class GenerateModelCheckpoint:
             if context_hash and context_hash not in hashes:
                 hashes.append(context_hash)
         return hashes
+
+    @staticmethod
+    def _normalized_invalidation_reasons(raw_reasons: Any) -> dict[str, str]:
+        if not isinstance(raw_reasons, dict):
+            return {}
+        return {
+            str(context_hash): str(reason or "previously_invalidated")
+            for context_hash, reason in raw_reasons.items()
+            if str(context_hash or "")
+        }
 
     def _prune_previous_files(self, preserved_result_names: set[str]) -> None:
         if not self.root.exists():
@@ -459,6 +592,31 @@ class GenerateModelCheckpoint:
             len(item.get("invalidated_context_hashes") or [])
             for item in tables.values()
             if isinstance(item, dict)
+        )
+        reuse_kind_counts: dict[str, int] = {}
+        invalidation_reason_counts: dict[str, int] = {}
+        for item in tables.values():
+            if not isinstance(item, dict):
+                continue
+            for variant in (item.get("inspection_variants") or {}).values():
+                if not isinstance(variant, dict) or not variant.get(
+                    "resume_eligible"
+                ):
+                    continue
+                kind = str(variant.get("reuse_kind") or "accepted")
+                reuse_kind_counts[kind] = reuse_kind_counts.get(kind, 0) + 1
+            for reason in (
+                item.get("resume_invalidation_reasons") or {}
+            ).values():
+                reason = str(reason or "previously_invalidated")
+                invalidation_reason_counts[reason] = (
+                    invalidation_reason_counts.get(reason, 0) + 1
+                )
+        manifest["resume_candidate_kind_counts"] = dict(
+            sorted(reuse_kind_counts.items())
+        )
+        manifest["invalidation_reason_counts"] = dict(
+            sorted(invalidation_reason_counts.items())
         )
 
     def _pending_file_specs(
@@ -583,6 +741,11 @@ class GenerateModelCheckpoint:
             "invalidated_context_hashes": self._normalized_context_hashes(
                 previous.get("invalidated_context_hashes")
             ),
+            "resume_invalidation_reasons": (
+                self._normalized_invalidation_reasons(
+                    previous.get("resume_invalidation_reasons")
+                )
+            ),
             "resumed_context_hashes": list(
                 previous.get("resumed_context_hashes") or []
             ),
@@ -603,6 +766,13 @@ class GenerateModelCheckpoint:
                 context_hash,
             )
             result_path = self.root / result_name
+            reuse = inspection_reuse_decision(
+                inspection_result,
+                min_confidence=(
+                    self.plan.resolution_policy.min_llm_confidence
+                ),
+            )
+            inspection_result.resume_eligible = reuse.eligible
             rendered_result = json.dumps(
                 result_to_cache_dict(inspection_result),
                 ensure_ascii=False,
@@ -618,24 +788,30 @@ class GenerateModelCheckpoint:
                 "content_sha256": file_spec["content_sha256"],
                 "inspection_status": inspection_result.status,
                 "confidence": inspection_result.confidence,
-                "resume_eligible": bool(inspection_result.resume_eligible),
+                "resume_eligible": reuse.eligible,
+                "reuse_kind": reuse.kind,
+                "invalidation_reason": reuse.reason,
                 "updated_at": _utc_timestamp(),
             }
-            is_resumable = bool(
-                inspection_result.status != "blocked"
-                and inspection_result.confidence
-                >= self.plan.resolution_policy.min_llm_confidence
-                and inspection_result.resume_eligible
-            )
             invalidated_hashes = entry["invalidated_context_hashes"]
-            if is_resumable:
+            invalidation_reasons = entry["resume_invalidation_reasons"]
+            if reuse.eligible:
                 with suppress(ValueError):
                     invalidated_hashes.remove(context_hash)
+                invalidation_reasons.pop(context_hash, None)
             elif context_hash not in invalidated_hashes:
                 invalidated_hashes.append(context_hash)
                 del invalidated_hashes[
                     :-MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE
                 ]
+                invalidation_reasons[context_hash] = reuse.reason
+            entry["resume_invalidation_reasons"] = {
+                cache_hash: invalidation_reasons.get(
+                    cache_hash,
+                    "previously_invalidated",
+                )
+                for cache_hash in invalidated_hashes
+            }
             while (
                 len(entry["inspection_variants"])
                 > MAX_CHECKPOINT_VARIANTS_PER_TABLE
@@ -758,6 +934,27 @@ class GenerateModelCheckpoint:
             self._write_manifest()
             return report_path
 
+    def write_catalog_proposal_audit(
+        self,
+        proposal_report: dict[str, Any],
+    ) -> None:
+        """Persist derived proposals without treating them as resume input."""
+        proposals = proposal_report.get("catalog_proposals") or []
+        conflicts = proposal_report.get("catalog_proposal_conflicts") or []
+        if not isinstance(proposals, list) or not isinstance(conflicts, list):
+            raise ValueError("catalog proposal audit must contain lists")
+        with self._lock:
+            self._manifest["catalog_proposal_audit"] = {
+                "schema_version": CATALOG_PROPOSAL_SCHEMA_VERSION,
+                "catalog_snapshot_hash": self.catalog_snapshot_hash,
+                "proposals": copy.deepcopy(proposals),
+                "proposal_count": len(proposals),
+                "conflicts": copy.deepcopy(conflicts),
+                "conflict_count": len(conflicts),
+                "generated_at": _utc_timestamp(),
+            }
+            self._write_manifest()
+
     def _invalidate_publication_rejected_variants(
         self,
         validation: dict[str, Any],
@@ -784,6 +981,8 @@ class GenerateModelCheckpoint:
             if not isinstance(variant, dict):
                 continue
             variant["resume_eligible"] = False
+            variant["reuse_kind"] = ""
+            variant["invalidation_reason"] = "publication_rejected"
             variant["updated_at"] = _utc_timestamp()
             invalidated_hashes = self._normalized_context_hashes(
                 entry.get("invalidated_context_hashes")
@@ -793,6 +992,17 @@ class GenerateModelCheckpoint:
             entry["invalidated_context_hashes"] = invalidated_hashes[
                 -MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE:
             ]
+            invalidation_reasons = self._normalized_invalidation_reasons(
+                entry.get("resume_invalidation_reasons")
+            )
+            invalidation_reasons[context_hash] = "publication_rejected"
+            entry["resume_invalidation_reasons"] = {
+                cache_hash: invalidation_reasons.get(
+                    cache_hash,
+                    "previously_invalidated",
+                )
+                for cache_hash in entry["invalidated_context_hashes"]
+            }
 
     def finish(
         self,
@@ -817,6 +1027,9 @@ class GenerateModelCheckpoint:
             layer_report = self._manifest.get("layer_classification_csv")
             if not isinstance(layer_report, dict):
                 layer_report = {}
+            proposal_audit = self._manifest.get("catalog_proposal_audit")
+            if not isinstance(proposal_audit, dict):
+                proposal_audit = {}
             return {
                 "enabled": True,
                 "run_id": self.run_id,
@@ -842,6 +1055,16 @@ class GenerateModelCheckpoint:
                 "invalidated_variant_count": self._manifest.get(
                     "invalidated_variant_count", 0
                 ),
+                "resume_candidate_kind_counts": self._manifest.get(
+                    "resume_candidate_kind_counts", {}
+                ),
+                "invalidation_reason_counts": self._manifest.get(
+                    "invalidation_reason_counts", {}
+                ),
+                "policy_versions": {
+                    name: self._manifest.get(name)
+                    for name in current_policy_versions()
+                },
                 "processed_table_count": self._manifest[
                     "processed_table_count"
                 ],
@@ -851,5 +1074,11 @@ class GenerateModelCheckpoint:
                 "layer_classification_csv_path": layer_report.get("path"),
                 "layer_classification_table_count": layer_report.get(
                     "row_count", 0
+                ),
+                "catalog_proposal_count": proposal_audit.get(
+                    "proposal_count", 0
+                ),
+                "catalog_proposal_conflict_count": proposal_audit.get(
+                    "conflict_count", 0
                 ),
             }

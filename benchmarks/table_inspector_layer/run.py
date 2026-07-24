@@ -822,8 +822,21 @@ def _llm_layers(
             ):
                 layers[table] = "FAILED"
                 continue
+            recovered = table_result.get("recovered_candidate")
+            recovered_payload = (
+                recovered.get("payload")
+                if isinstance(recovered, dict)
+                else None
+            )
+            recovered_layer = (
+                recovered_payload.get("inferred_layer")
+                if field == "inferred_layer"
+                and isinstance(recovered_payload, dict)
+                else None
+            )
             layers[table] = str(
-                table_result.get(field)
+                recovered_layer
+                or table_result.get(field)
                 or table_result.get("inferred_layer")
                 or "MISSING"
             ).upper()
@@ -862,42 +875,17 @@ def _catalog_codes_from_file(path: Path, key: str) -> List[str]:
     return _catalog_codes(_load_yaml_mapping(path).get(key) or [])
 
 
-def _candidate_catalog_codes(
-    published_codes: List[str],
-    changes: List[Dict[str, Any]],
-    section: str,
-) -> List[str]:
-    codes = {code.casefold(): code for code in published_codes}
-    for change in changes:
-        if change.get("section") != section:
-            continue
-        entry = (
-            change.get("entry")
-            if isinstance(change.get("entry"), dict)
-            else {}
-        )
-        code = str(entry.get("code") or change.get("code") or "").strip()
-        if not code:
-            continue
-        canonical = code.casefold()
-        if str(change.get("action") or "").strip().lower() == "delete":
-            codes.pop(canonical, None)
-        else:
-            codes[canonical] = code
-    return sorted(codes.values())
-
-
 def _catalog_summary(
     temp_project: TempProject,
     result: Dict[str, Any],
     *,
     dry_run: bool,
 ) -> Dict[str, Any]:
-    changes = list(
-        result.get("planned_catalog_updates")
-        or result.get("catalog_updates")
-        or []
-    )
+    proposals = [
+        item
+        for item in result.get("catalog_proposals") or []
+        if isinstance(item, dict)
+    ]
     published_process_codes = _catalog_codes_from_file(
         temp_project.target_dir / "business_processes.yaml",
         "business_processes",
@@ -906,15 +894,21 @@ def _catalog_summary(
         temp_project.target_dir / "semantic_subjects.yaml",
         "semantic_subjects",
     )
-    candidate_process_codes = _candidate_catalog_codes(
-        published_process_codes,
-        changes,
-        "business_processes",
+    candidate_process_codes = published_process_codes
+    candidate_subject_codes = published_subject_codes
+    proposed_process_codes = sorted(
+        {
+            str(item.get("code") or "")
+            for item in proposals
+            if item.get("kind") == "business_process" and item.get("code")
+        }
     )
-    candidate_subject_codes = _candidate_catalog_codes(
-        published_subject_codes,
-        changes,
-        "semantic_subjects",
+    proposed_subject_codes = sorted(
+        {
+            str(item.get("code") or "")
+            for item in proposals
+            if item.get("kind") == "semantic_subject" and item.get("code")
+        }
     )
 
     expected_process = temp_project.expected_catalog["business_processes"]
@@ -924,6 +918,12 @@ def _catalog_summary(
     )
     subject_overlap = sorted(
         set(candidate_subject_codes) & set(expected_subject)
+    )
+    proposed_process_overlap = sorted(
+        set(proposed_process_codes) & set(expected_process)
+    )
+    proposed_subject_overlap = sorted(
+        set(proposed_subject_codes) & set(expected_subject)
     )
     return {
         "business_process_count": len(candidate_process_codes),
@@ -936,6 +936,14 @@ def _catalog_summary(
         "generated_semantic_subject_codes": candidate_subject_codes,
         "semantic_subject_overlap_codes": subject_overlap,
         "semantic_subject_overlap_count": len(subject_overlap),
+        "proposed_business_process_overlap_codes": (proposed_process_overlap),
+        "proposed_business_process_overlap_count": len(
+            proposed_process_overlap
+        ),
+        "proposed_semantic_subject_overlap_codes": proposed_subject_overlap,
+        "proposed_semantic_subject_overlap_count": len(
+            proposed_subject_overlap
+        ),
         "candidate": {
             "business_process_count": len(candidate_process_codes),
             "semantic_subject_count": len(candidate_subject_codes),
@@ -947,6 +955,15 @@ def _catalog_summary(
             "semantic_subject_count": len(published_subject_codes),
             "business_process_codes": published_process_codes,
             "semantic_subject_codes": published_subject_codes,
+        },
+        "proposals": {
+            "business_process_count": len(proposed_process_codes),
+            "semantic_subject_count": len(proposed_subject_codes),
+            "business_process_codes": proposed_process_codes,
+            "semantic_subject_codes": proposed_subject_codes,
+            "conflict_count": int(
+                result.get("catalog_proposal_conflict_count") or 0
+            ),
         },
     }
 
@@ -1021,7 +1038,13 @@ def _summarize_project(
             continue
         expected_layer = str(expected.get("layer") or "OTHER").upper()
         final_model = candidate_models.get(target_table, {})
-        final_layer = str(final_model.get("layer") or "MISSING").upper()
+        governance = final_model.get("governance") or {}
+        withheld = set(governance.get("withheld_sections") or [])
+        final_layer = (
+            "QUARANTINED"
+            if "classification" in withheld
+            else str(final_model.get("layer") or "MISSING").upper()
+        )
         first_attempt_layer = first_attempt_layers.get(target_table, "NOT_RUN")
         post_retry_layer = post_retry_layers.get(target_table, "NOT_RUN")
 
@@ -1074,6 +1097,11 @@ def _summarize_project(
         if isinstance(publication.get("validation"), dict)
         else {}
     )
+    candidate_resolution = (
+        result.get("candidate_resolution")
+        if isinstance(result.get("candidate_resolution"), dict)
+        else {}
+    )
     return {
         "source_project": temp_project.source_project,
         "target_project": temp_project.target_project,
@@ -1089,7 +1117,24 @@ def _summarize_project(
         "warning_count": status_counts["warning"],
         "metadata_warning_count": status_counts["metadata_warning"],
         "publication_status": str(publication.get("status") or "unknown"),
+        "candidate_status": str(
+            publication.get("candidate_status") or "unknown"
+        ),
+        "complete": bool(publication.get("complete")),
         "published": bool(publication.get("published")),
+        "would_publish_status": str(
+            publication.get("would_publish_status") or ""
+        ),
+        "formal_files_state": str(
+            publication.get("formal_files_state") or "unknown"
+        ),
+        "finalization_status": str(
+            publication.get("finalization_status") or "unknown"
+        ),
+        "recovery_required": bool(publication.get("recovery_required")),
+        "withheld_section_count": int(
+            publication.get("withheld_section_count") or 0
+        ),
         "publication_error_count": int(
             publication_validation.get("error_count") or 0
         ),
@@ -1098,6 +1143,25 @@ def _summarize_project(
         "catalog_update": result.get("catalog_update"),
         "planned_catalog_updates": result.get("planned_catalog_updates") or [],
         "catalog_updates": result.get("catalog_updates") or [],
+        "catalog_proposals": result.get("catalog_proposals") or [],
+        "catalog_proposal_count": int(
+            result.get("catalog_proposal_count") or 0
+        ),
+        "catalog_proposal_conflict_count": int(
+            result.get("catalog_proposal_conflict_count") or 0
+        ),
+        "candidate_resolution_status": str(
+            candidate_resolution.get("status") or "not_run"
+        ),
+        "quarantined_model_count": int(
+            candidate_resolution.get("quarantined_table_count") or 0
+        ),
+        "section_decisions": candidate_resolution.get("section_decisions")
+        or [],
+        "propagation_provenance": candidate_resolution.get(
+            "propagation_provenance"
+        )
+        or [],
         "llm_middle_correct_count": llm_middle_correct,
         "llm_middle_accuracy": (
             llm_middle_correct / middle_count if middle_count else 0.0
@@ -1153,6 +1217,7 @@ def run_benchmark(
     request_timeout: int = DEFAULT_REQUEST_TIMEOUT,
     no_cache: bool = False,
     dry_run: bool = False,
+    require_complete: bool = False,
     output_path: Optional[Path] = None,
     asset_dir: Optional[Path] = None,
     cleanup: bool = False,
@@ -1205,6 +1270,7 @@ def run_benchmark(
                 request_timeout=request_timeout,
                 no_cache=no_cache,
                 dry_run=dry_run,
+                require_complete=require_complete,
                 update_catalog=True,
                 replace_existing_models=True,
                 show_progress=show_progress,
@@ -1236,6 +1302,7 @@ def run_benchmark(
         "parallelism": parallelism,
         "request_timeout": request_timeout,
         "dry_run": dry_run,
+        "require_complete": require_complete,
         "tmp_root": str(tmp_root),
         "total_table_count": total_tables,
         "total_middle_table_count": total_middle,
@@ -1247,6 +1314,9 @@ def run_benchmark(
         ),
         "total_catalog_change_count": sum(
             item["catalog_change_count"] for item in summaries
+        ),
+        "total_catalog_proposal_count": sum(
+            item["catalog_proposal_count"] for item in summaries
         ),
         "total_business_process_count": sum(
             item["catalog_summary"]["business_process_count"]
@@ -1261,6 +1331,20 @@ def run_benchmark(
         ),
         "blocked_project_count": sum(
             1 for item in summaries if item["publication_status"] == "blocked"
+        ),
+        "incomplete_project_count": sum(
+            1
+            for item in summaries
+            if item["candidate_status"] == "quarantined"
+        ),
+        "inspection_failure_project_count": sum(
+            1
+            for item in summaries
+            if "not_published_inspection_failure"
+            in {
+                item["publication_status"],
+                item["would_publish_status"],
+            }
         ),
         "projects": summaries,
     }
@@ -1290,9 +1374,9 @@ def _print_report(report: Dict[str, Any]) -> None:
         print(
             "  {source_project}: first_attempt={llm_middle_accuracy:.2%} "
             "post_retry={post_retry_middle_accuracy:.2%} "
-            "models={generated_model_count} catalog_changes={catalog_change_count}".format(
-                **project
-            )
+            "models={generated_model_count} "
+            "catalog_changes={catalog_change_count} "
+            "catalog_proposals={catalog_proposal_count}".format(**project)
         )
 
 
@@ -1326,6 +1410,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Preview model/catalog updates without writing generated YAML.",
+    )
+    parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="Reject publication when any model section is quarantined.",
     )
     parser.add_argument(
         "--show-progress",
@@ -1374,6 +1463,7 @@ def main(argv: Optional[List[str]] = None) -> Dict[str, Any]:
         request_timeout=args.request_timeout,
         no_cache=args.no_cache,
         dry_run=args.dry_run,
+        require_complete=args.require_complete,
         output_path=Path(args.output) if args.output else None,
         asset_dir=Path(args.asset_dir) if args.asset_dir else None,
         cleanup=args.cleanup,

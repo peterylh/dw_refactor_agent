@@ -5,6 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
+from dw_refactor_agent.assessment.llm.inspection_issues import (
+    InspectionTransportError,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableContext,
     TableInspector,
@@ -1677,7 +1680,10 @@ def test_inspect_preserves_warning_when_retry_transport_fails(tmp_path):
     with patch.object(
         inspector,
         "_call_api",
-        side_effect=[response, RuntimeError("transient failure")],
+        side_effect=[
+            response,
+            InspectionTransportError("transient failure"),
+        ],
     ) as api:
         result = inspector.inspect(context)
 
@@ -1730,8 +1736,8 @@ def _assert_cache_hit_skips_api(tmp_path):
     ctx = TableContext(
         table_name="t1",
         layer="DWD",
-        ddl="ddl1",
-        etl_sql="etl1",
+        ddl="CREATE TABLE t1 (id BIGINT);",
+        etl_sql="SELECT id FROM source_table;",
         upstream_tables=[],
         downstream_tables=[],
     )
@@ -1746,13 +1752,20 @@ def _assert_cache_hit_skips_api(tmp_path):
                         "content": json.dumps(
                             {
                                 "inferred_layer": "DWD",
-                                "table_type": "dimension",
+                                "table_type": "fact",
                                 "confidence": 0.9,
                                 "reasoning_steps": ["cached"],
+                                "entities": [
+                                    {
+                                        "code": "TEST",
+                                        "type": "primary",
+                                        "key_columns": ["id"],
+                                    }
+                                ],
                                 "columns": {
                                     "atomic_metrics": [],
                                     "derived_metrics": [],
-                                    "dimensions": [],
+                                    "dimensions": [{"name": "id"}],
                                     "others": [],
                                 },
                             }
@@ -1763,22 +1776,15 @@ def _assert_cache_hit_skips_api(tmp_path):
         },
         declared_layer="DWD",
     )
-    cache_data = {
-        "t1": {
-            "hash": inspector._compute_hash(ctx),
-            # 旧缓存可能包含派生字段，读取时应忽略并重新计算。
-            "result": result_to_dict(cached),
-        }
-    }
-    cache_file.write_text(json.dumps(cache_data))
-
-    # 重新加载缓存
-    inspector._load_cache()
+    cached.context_hash = inspector._compute_hash(ctx)
+    inspector._store_cached_result("t1", cached.context_hash, cached)
+    inspector._save_cache()
+    inspector = TableInspector(api_key="test", cache_file=cache_file)
 
     with patch.object(inspector, "_call_api") as mock_api:
         res = inspector.inspect(ctx)
         mock_api.assert_not_called()
-        assert res.table_type == "dimension"
+        assert res.table_type == "fact"
         assert res.reasoning_steps == ["cached"]
 
 
@@ -2102,8 +2108,18 @@ def _assert_progress_callback_reports_cache_hit(tmp_path):
                         "content": json.dumps(
                             {
                                 "inferred_layer": "DWD",
-                                "table_type": "dimension",
+                                "table_type": "fact",
                                 "confidence": 0.9,
+                                "entities": [
+                                    {
+                                        "code": "TEST",
+                                        "type": "primary",
+                                        "key_columns": ["id"],
+                                    }
+                                ],
+                                "columns": {
+                                    "dimensions": [{"name": "id"}],
+                                },
                             }
                         )
                     }
@@ -2112,17 +2128,10 @@ def _assert_progress_callback_reports_cache_hit(tmp_path):
         },
         declared_layer="DWD",
     )
-    cache_file.write_text(
-        json.dumps(
-            {
-                "t1": {
-                    "hash": inspector._compute_hash(ctx),
-                    "result": result_to_cache_dict(cached),
-                }
-            }
-        )
-    )
-    inspector._load_cache()
+    cached.context_hash = inspector._compute_hash(ctx)
+    inspector._store_cached_result("t1", cached.context_hash, cached)
+    inspector._save_cache()
+    inspector = TableInspector(api_key="test", cache_file=cache_file)
     events = []
     inspector.progress_callback = events.append
 

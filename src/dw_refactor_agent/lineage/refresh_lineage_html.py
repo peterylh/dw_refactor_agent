@@ -22,13 +22,15 @@ if str(_src_root) not in sys.path:
 from dw_refactor_agent.config import (
     PROJECT_CONFIG,
     TEXT_ENCODING,
-    determine_layer,
     iter_project_task_files,
     layer_rank,
     lineage_data_path,
     lineage_html_path,
     lineage_job_html_path,
     task_source_file,
+)
+from dw_refactor_agent.config import (
+    determine_operational_layer as determine_layer,
 )
 from dw_refactor_agent.lineage.contract import validate_lineage_v2
 from dw_refactor_agent.lineage.identifiers import (
@@ -163,7 +165,10 @@ def build_frontend_lineage_data(data, project):
         for node in data["nodes"]:
             normalized_node = dict(node)
             table_name = str(normalized_node.get("table") or "")
-            normalized_node["layer"] = determine_layer(table_name, project)
+            normalized_node["layer"] = determine_layer(
+                table_name,
+                project,
+            )
             frontend_nodes.append(normalized_node)
         frontend_data["nodes"] = frontend_nodes
 
@@ -220,7 +225,10 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
                         ),
                         ("outputs", outputs),
                         ("target", main_target),
-                        ("layer", determine_layer(main_target, project)),
+                        (
+                            "layer",
+                            determine_layer(main_target, project),
+                        ),
                         (
                             "logic",
                             job_logic.get(

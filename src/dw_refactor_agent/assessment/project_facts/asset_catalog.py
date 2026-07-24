@@ -11,6 +11,9 @@ from typing import Any
 
 import yaml
 
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
+)
 from dw_refactor_agent.config import PROJECT_CONFIG, TEXT_ENCODING
 from dw_refactor_agent.ddl_deriver.ddl_deriver import parse_create_table
 from dw_refactor_agent.lineage.sql_task_facts import extract_task_table_facts
@@ -49,6 +52,7 @@ class DdlAsset(_RecordMapping):
     path: Path | None
     file_stem: str | None
     declared_name: str
+    full_name: str = ""
     columns: list[dict] = field(default_factory=list)
     key_type: str = ""
     key_columns: list[str] = field(default_factory=list)
@@ -59,6 +63,7 @@ class DdlAsset(_RecordMapping):
         "path",
         "file_stem",
         "declared_name",
+        "full_name",
         "columns",
         "key_type",
         "key_columns",
@@ -73,6 +78,7 @@ class DdlAsset(_RecordMapping):
             path=Path(raw_path) if raw_path else None,
             file_stem=value.get("file_stem"),
             declared_name=str(value.get("declared_name") or ""),
+            full_name=str(value.get("full_name") or ""),
             columns=list(value.get("columns") or []),
             key_type=str(value.get("key_type") or ""),
             key_columns=list(value.get("key_columns") or []),
@@ -270,6 +276,12 @@ def _short_table_name(table_name: str) -> str:
     return name.split(".")[-1].strip()
 
 
+def _semantic_layer(metadata: Mapping[str, Any] | None) -> str | None:
+    if not metadata:
+        return None
+    return AssessmentModelSemantics.from_metadata(metadata).layer
+
+
 def _relative_asset_path(project_dir: Path, file_path: Path) -> str:
     try:
         return file_path.relative_to(project_dir).as_posix()
@@ -319,7 +331,7 @@ def _ddl_table_for_naming(
         return None
 
     metadata = model_metadata.get(name, {}) if model_metadata else {}
-    layer = str(metadata.get("layer") or "OTHER").upper()
+    layer = _semantic_layer(metadata) or "OTHER"
     return dict(
         name=name,
         full_name=table_def.full_name,
@@ -347,11 +359,7 @@ def _tables_for_naming(
             else {}
         )
         current = dict(table)
-        current["layer"] = (
-            str(metadata["layer"]).upper()
-            if metadata.get("layer")
-            else "OTHER"
-        )
+        current["layer"] = _semantic_layer(metadata) or "OTHER"
         current_tables.append(current)
 
     if not project_dir:
@@ -585,8 +593,9 @@ def build_asset_catalog(
             declared_name=declared_name,
             metadata=dict(metadata),
         )
-        if metadata.get("layer"):
-            asset.layer = str(metadata["layer"]).upper()
+        semantic_layer = _semantic_layer(metadata)
+        if semantic_layer:
+            asset.layer = semantic_layer
 
     if project_path:
         ddl_dirs = _asset_dirs(project_path, "ddl")
@@ -608,6 +617,7 @@ def build_asset_catalog(
                         path=ddl_path,
                         file_stem=ddl_path.stem,
                         declared_name=declared_name,
+                        full_name=str((table or {}).get("full_name") or ""),
                         columns=columns,
                         key_type=(table or {}).get("key_type", ""),
                         key_columns=list(
@@ -656,8 +666,9 @@ def build_asset_catalog(
                             _MODEL_ROLE_EXPECTED_LAYERS.get(asset_role, [])
                         ),
                     )
-                    if metadata.get("layer"):
-                        asset.layer = str(metadata["layer"]).upper()
+                    semantic_layer = _semantic_layer(metadata)
+                    if semantic_layer:
+                        asset.layer = semantic_layer
 
         task_facts = []
         if task_dirs:

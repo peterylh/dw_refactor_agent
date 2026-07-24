@@ -1,3 +1,4 @@
+import dw_refactor_agent.config as config
 from dw_refactor_agent.lineage.asset_graph import (
     build_asset_column_lineage,
     build_asset_self_edges,
@@ -6,6 +7,7 @@ from dw_refactor_agent.lineage.asset_graph import (
 from dw_refactor_agent.lineage.table_graph import (
     build_table_edge_source_files,
     build_table_graph,
+    build_table_layer_map,
     collect_table_self_edges,
 )
 
@@ -31,6 +33,38 @@ def _v2_tables(*names):
         }
         for name in names
     ]
+
+
+def test_table_layer_map_uses_operational_layer_for_quarantined_model():
+    model = config.validate_model_metadata(
+        {
+            "version": 3,
+            "name": "dws_orders",
+            "operational_layer": "DWS",
+            "execution": {
+                "materialized": "full",
+                "full_refresh_strategy": "replace_all",
+            },
+            "governance": {
+                "status": "quarantined",
+                "schema_version": 1,
+                "withheld_sections": list(config.MODEL_SECTIONS),
+                "reasons": {
+                    "classification": ["structure_bundle_incomplete"],
+                    "business_semantics": ["business_process_missing"],
+                    "entities": ["structure_bundle_incomplete"],
+                    "grain": ["structure_bundle_incomplete"],
+                    "metrics": ["dependent_structure_unavailable"],
+                },
+            },
+        }
+    )
+
+    assert build_table_layer_map(
+        [{"name": "demo.DWS_Orders"}],
+        "demo",
+        {"dws_orders": model},
+    ) == {"demo.DWS_Orders": "DWS"}
 
 
 def two_local_t_jobs_v2():

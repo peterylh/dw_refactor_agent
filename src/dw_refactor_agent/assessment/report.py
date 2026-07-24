@@ -85,14 +85,20 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         if key not in dimensions:
             continue
         metric = dimensions[key]
-        score = metric["score"]
+        raw_score = metric["score"]
+        score = (
+            None
+            if raw_score is None
+            else metric.get("effective_score", raw_score)
+        )
+        score_text = "  N/A" if score is None else f"{score:>5.1f}"
         w = (
             weights[key] / displayed_weight_total * 100
             if displayed_weight_total
             else 0
         )
         parts.append(
-            f"║ {label:<12} 评分:{score:>5.1f}  权重:{w:>2.0f}%{' ' * 24}║"
+            f"║ {label:<12} 评分:{score_text}  权重:{w:>2.0f}%{' ' * 24}║"
         )
 
     parts.append(f"╚{'═' * 62}╝")
@@ -103,8 +109,25 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         if key not in dimensions:
             continue
         dimension = dimensions[key]
+        raw_score = dimension["score"]
+        effective_score = dimension.get("effective_score", raw_score)
         parts.append(f"\n{'=' * 62}")
-        parts.append(f"【{label}】评分: {dimension['score']}")
+        if raw_score is None:
+            parts.append(f"【{label}】评分: N/A")
+            parts.append(f"  总分贡献: {effective_score}")
+        else:
+            parts.append(f"【{label}】计入总分: {effective_score}")
+        if raw_score is not None and effective_score != raw_score:
+            parts.append(f"  已评估部分得分: {raw_score}")
+        coverage = dimension.get("coverage")
+        if coverage:
+            parts.append(
+                "  评估覆盖: "
+                f"{coverage.get('assessed_count', 0)}/"
+                f"{coverage.get('eligible_count', 0)} "
+                f"{coverage.get('unit', 'units')}"
+                f"，状态={dimension.get('status', 'complete')}"
+            )
         parts.append(f"{'=' * 62}")
 
         rows = []
@@ -140,7 +163,10 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
             if len(issues) > 30:
                 parts.append(f"    ... (共{len(issues)}个)")
         else:
-            parts.append("\n  无问题项")
+            if dimension.get("complete") is False:
+                parts.append("\n  已评估范围内无问题项；隔离语义未参与评估")
+            else:
+                parts.append("\n  无问题项")
         parts.append(sep)
 
     parts.append(f"\n{'=' * 62}")

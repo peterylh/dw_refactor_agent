@@ -9,10 +9,20 @@ from typing import Any
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    MetadataPublicationOutcome,
+    capture_metadata_publication_snapshot,
+    metadata_publication_lock,
+    transactional_metadata_publication,
+)
 from dw_refactor_agent.assessment.project_facts.asset_catalog import (
     _short_table_name,
 )
-from dw_refactor_agent.config import TEXT_ENCODING
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
+    CanonicalSemanticPayload,
+)
+from dw_refactor_agent.config import TEXT_ENCODING, UnavailableModelSection
 
 CATALOG_VERSION = 1
 LEGACY_BUSINESS_SEMANTICS_FILE_NAME = "business_semantics.yaml"
@@ -557,11 +567,13 @@ def write_initial_business_semantics_catalog(
 ) -> dict[str, Any]:
     directory = business_semantics_dir(project)
     paths = business_semantics_paths(project)
-    split_base_catalog = load_business_semantics_catalog(project)
-    legacy_catalog = _load_legacy_business_semantics_catalog(
-        directory,
-        project,
-    )
+    with metadata_publication_lock(project):
+        base_snapshot = capture_metadata_publication_snapshot(project)
+        split_base_catalog = load_business_semantics_catalog(project)
+        legacy_catalog = _load_legacy_business_semantics_catalog(
+            directory,
+            project,
+        )
     base_catalog = _catalog_with_legacy_missing_sections(
         split_base_catalog,
         legacy_catalog,
@@ -599,22 +611,33 @@ def write_initial_business_semantics_catalog(
     )
     removed_legacy_paths: list[str] = []
     changed = bool(write_names or legacy_paths_to_remove)
+    publication_outcome = MetadataPublicationOutcome(
+        formal_files_state="unchanged",
+        finalization_status="not_started",
+        recovery_required=False,
+    )
     if changed and not dry_run:
-        directory.mkdir(parents=True, exist_ok=True)
-        for name in sorted(write_names):
-            paths[name].write_text(
-                yaml.safe_dump(
-                    payloads[name],
-                    allow_unicode=True,
-                    sort_keys=False,
-                ),
-                encoding=TEXT_ENCODING,
+        rendered_files = {
+            paths[name]: yaml.safe_dump(
+                payloads[name],
+                allow_unicode=True,
+                sort_keys=False,
             )
-        for path in legacy_paths_to_remove:
-            Path(path).unlink()
-            removed_legacy_paths.append(path)
-        config.clear_business_semantics_cache()
-        config.clear_naming_config_cache()
+            for name in sorted(write_names)
+        }
+
+        def clear_caches() -> None:
+            config.clear_business_semantics_cache()
+            config.clear_naming_config_cache()
+
+        publication_outcome = transactional_metadata_publication(
+            project,
+            rendered_files,
+            delete_paths=tuple(map(Path, legacy_paths_to_remove)),
+            expected_snapshot=base_snapshot,
+        )
+        clear_caches()
+        removed_legacy_paths.extend(legacy_paths_to_remove)
     return {
         "project": project,
         "path": str(directory),
@@ -625,6 +648,7 @@ def write_initial_business_semantics_catalog(
         "changed": changed,
         "updated": bool(changed and not dry_run),
         "catalog": catalog,
+        "publication": publication_outcome.to_dict(),
     }
 
 
@@ -695,13 +719,13 @@ def _catalog_taxonomy_metadata(
 
 def _existing_catalog_taxonomy_metadata(
     catalog: dict[str, Any],
-    metadata: dict[str, Any],
+    semantic_metadata: dict[str, Any],
 ) -> dict[str, str]:
     return _catalog_taxonomy_metadata(
         catalog,
         {
-            "data_domain": metadata.get("data_domain"),
-            "business_area": metadata.get("business_area"),
+            "data_domain": semantic_metadata.get("data_domain"),
+            "business_area": semantic_metadata.get("business_area"),
         },
     )
 
@@ -717,21 +741,31 @@ def catalog_mapping_for_model(
     catalog: dict[str, Any],
     table_name: str,
     model_metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | UnavailableModelSection:
     """Build catalog-backed model metadata from existing model references.
 
     The model owns table-to-process/subject assignment. The catalog only
     enriches those references with governed domain and area metadata.
     """
     short_name = _short_table_name(table_name)
-    metadata = model_metadata or {}
+    if model_metadata is None:
+        semantic_metadata = CanonicalSemanticPayload()
+    elif isinstance(model_metadata, CanonicalSemanticPayload):
+        semantic_metadata = CanonicalSemanticPayload(model_metadata)
+    else:
+        view = AssessmentModelSemantics.from_metadata(model_metadata)
+        for section in ("classification", "business_semantics"):
+            value = view.section(section)
+            if isinstance(value, UnavailableModelSection):
+                return value
+        semantic_metadata = view.canonical_semantic_mapping()
     layer = str(
-        metadata.get("layer") or _layer_from_table_name(short_name)
+        semantic_metadata.get("layer") or _layer_from_table_name(short_name)
     ).upper()
-    table_type = str(metadata.get("table_type") or "").strip()
+    table_type = str(semantic_metadata.get("table_type") or "").strip()
 
     semantic_subject = _normalize_catalog_code(
-        metadata.get("semantic_subject")
+        semantic_metadata.get("semantic_subject")
     )
     if semantic_subject and _model_accepts_semantic_subject(
         layer,
@@ -744,7 +778,10 @@ def catalog_mapping_for_model(
         if not subject:
             mapping = {"table": short_name}
             mapping.update(
-                _existing_catalog_taxonomy_metadata(catalog, metadata)
+                _existing_catalog_taxonomy_metadata(
+                    catalog,
+                    semantic_metadata,
+                )
             )
             return mapping
         mapping = {
@@ -757,8 +794,58 @@ def catalog_mapping_for_model(
         mapping.update(_catalog_taxonomy_metadata(catalog, subject))
         return mapping
 
+    business_process_mode = str(
+        semantic_metadata.get("business_process_mode") or ""
+    ).strip()
+    business_process_sources = [
+        str(source).strip()
+        for source in semantic_metadata.get("business_process_sources") or []
+        if str(source).strip()
+    ]
+    business_processes = [
+        _normalize_catalog_code(code)
+        for code in semantic_metadata.get("business_processes") or []
+        if _normalize_catalog_code(code)
+    ]
+    if (
+        business_process_mode == "composite"
+        and layer == "DWS"
+        and (table_type or "fact").lower() == "fact"
+        and len(set(business_process_sources)) >= 2
+        and business_processes
+    ):
+        catalog_codes = []
+        for code in business_processes:
+            process = _entry_by_code(
+                catalog.get("business_processes") or [],
+                code,
+            )
+            if not process:
+                mapping = {"table": short_name}
+                mapping.update(
+                    _existing_catalog_taxonomy_metadata(
+                        catalog,
+                        semantic_metadata,
+                    )
+                )
+                return mapping
+            catalog_codes.append(str(process.get("code") or "").strip())
+        mapping = {
+            "table": short_name,
+            "layer": layer,
+            "table_type": table_type or "fact",
+            "business_process_mode": "composite",
+            "business_processes": catalog_codes,
+            "business_process_sources": business_process_sources,
+            "materialized": _materialized_for_layer(layer),
+        }
+        mapping.update(
+            _existing_catalog_taxonomy_metadata(catalog, semantic_metadata)
+        )
+        return mapping
+
     business_process = _normalize_catalog_code(
-        metadata.get("business_process")
+        semantic_metadata.get("business_process")
     )
     if business_process:
         process = _entry_by_code(
@@ -768,7 +855,10 @@ def catalog_mapping_for_model(
         if not process:
             mapping = {"table": short_name}
             mapping.update(
-                _existing_catalog_taxonomy_metadata(catalog, metadata)
+                _existing_catalog_taxonomy_metadata(
+                    catalog,
+                    semantic_metadata,
+                )
             )
             return mapping
         mapping = {
@@ -782,5 +872,7 @@ def catalog_mapping_for_model(
         return mapping
 
     mapping = {"table": short_name}
-    mapping.update(_existing_catalog_taxonomy_metadata(catalog, metadata))
+    mapping.update(
+        _existing_catalog_taxonomy_metadata(catalog, semantic_metadata)
+    )
     return mapping

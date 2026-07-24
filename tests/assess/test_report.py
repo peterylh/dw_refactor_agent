@@ -1,6 +1,6 @@
 import unicodedata
 
-from dw_refactor_agent.assessment.report import _fmt_table
+from dw_refactor_agent.assessment.report import _fmt_table, generate_report
 
 
 def _display_width(text):
@@ -78,3 +78,42 @@ def test_fmt_table_aligns_separator_columns_with_chinese_text():
     assert lines
     for line in lines:
         assert _separator_offsets(line) == expected_offsets
+
+
+def _quarantined_report(score, effective_score, status, eligible, assessed):
+    return generate_report(
+        {
+            "overall_score": effective_score,
+            "dimensions": {
+                "reuse": {
+                    "score": score,
+                    "effective_score": effective_score,
+                    "status": status,
+                    "complete": False,
+                    "coverage": {
+                        "unit": "tables",
+                        "eligible_count": eligible,
+                        "assessed_count": assessed,
+                    },
+                    "rule_summary": {},
+                    "issues": [],
+                }
+            },
+        },
+        {"reuse": 1.0},
+        "shop",
+    )
+
+
+def test_report_discloses_partial_and_unassessed_quarantine():
+    report = _quarantined_report(100.0, 50.0, "quarantined", 2, 1)
+    assert "【复用度】计入总分: 50.0" in report
+    assert "已评估部分得分: 100.0" in report
+    assert "评估覆盖: 1/2 tables，状态=quarantined" in report
+    assert "隔离语义未参与评估" in report
+
+    not_assessed = _quarantined_report(None, 0.0, "not_assessed", 1, 0)
+    assert "评分:  N/A" in not_assessed
+    assert "【复用度】评分: N/A" in not_assessed
+    assert "总分贡献: 0.0" in not_assessed
+    assert "已评估部分得分: None" not in not_assessed

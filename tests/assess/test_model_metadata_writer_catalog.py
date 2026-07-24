@@ -1,7 +1,12 @@
+from types import SimpleNamespace
+
 import pytest
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.catalog_proposals import (
+    build_catalog_proposal_report,
+)
 from dw_refactor_agent.assessment.llm.layer_resolution import (
     LayerResolutionPolicy,
 )
@@ -12,12 +17,16 @@ from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     run_metadata_write,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
+from dw_refactor_agent.assessment.semantic_models import (
+    CanonicalSemanticPayload,
+)
 from tests.assess.model_metadata_writer_test_support import (
     _catalog_payload,
     _configure_project_root,
     _customer_subject,
     _order_detail_process,
     _setup_catalog_discovery_model,
+    _structured_inspection_result,
     _write_catalog_project,
     _write_split_catalog,
 )
@@ -66,7 +75,7 @@ def _install_generate_catalog_fake_inspector(
             for ctx in contexts:
                 result = result_factory(ctx)
                 if result is not None:
-                    results.append(result)
+                    results.append(_structured_inspection_result(result))
             return results
 
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
@@ -127,58 +136,49 @@ def _generate_catalog_result_for_context(ctx):
     return None
 
 
-def test_run_generate_model_metadata_llm_dry_run_plans_catalog_merge(
-    tmp_path, monkeypatch
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    project = "generate_llm_catalog_dry_run"
-    project_dir = _write_catalog_project(
-        tmp_path,
-        monkeypatch,
-        project,
-        catalog=_catalog_payload(),
-        ddl_tables=["dwd_order_detail", "dim_customer"],
-    )
-    _install_generate_catalog_fake_inspector(
-        monkeypatch,
-        writer_module,
-        table_names=["dwd_order_detail", "dim_customer"],
-        result_factory=_generate_catalog_result_for_context,
-    )
-
-    result = run_generate_model_metadata(
-        project,
-        api_key="test",
-        dry_run=True,
-    )
-    planned_codes = {
-        update["code"] for update in result["planned_catalog_updates"]
-    }
-    processes = yaml.safe_load(
-        (project_dir / "business_processes.yaml").read_text(encoding="utf-8")
-    )
-    subjects = yaml.safe_load(
-        (project_dir / "semantic_subjects.yaml").read_text(encoding="utf-8")
-    )
-
-    assert result["catalog_change_count"] == 2
-    assert result["catalog_update"]["updated"] is False
-    assert result["catalog_update"]["planned_written_names"] == [
-        "business_processes",
-        "semantic_subjects",
+def test_catalog_proposals_dedupe_sources_and_report_name_conflicts():
+    results = [
+        _generate_catalog_dimension_result(
+            SimpleNamespace(table_name=table_name, layer="DIM")
+        )
+        for table_name in ("dim_customer", "DIM_CUSTOMER_ALIAS")
     ]
-    assert planned_codes == {"ORDER_TRANSACTION", "CUSTOMER"}
-    assert processes["business_processes"] == []
-    assert subjects["semantic_subjects"] == []
+    results[0].entities[0].update(code="customer", name="客户")
+    results[1].entities[0].update(code="customer", name="Customer")
+
+    report = build_catalog_proposal_report(
+        results,
+        confirmed_catalog={"semantic_subjects": []},
+    )
+
+    assert report["catalog_proposal_count"] == 1
+    proposal = report["catalog_proposals"][0]
+    assert proposal["code"] == "CUSTOMER"
+    assert proposal["display_name"] is None
+    assert proposal["display_name_candidates"] == ["Customer", "客户"]
+    assert proposal["source_tables"] == [
+        "dim_customer",
+        "DIM_CUSTOMER_ALIAS",
+    ]
+    assert len(proposal["evidence"]) == 2
+    assert report["catalog_proposal_conflicts"] == [
+        {
+            "kind": "semantic_subject",
+            "code": "CUSTOMER",
+            "display_name_candidates": ["Customer", "客户"],
+            "source_tables": ["dim_customer", "DIM_CUSTOMER_ALIAS"],
+            "status": "conflict",
+        }
+    ]
 
 
-def test_run_generate_model_metadata_llm_writes_catalog_merge(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("dry_run", [True, False], ids=("dry-run", "write"))
+def test_run_generate_model_metadata_only_proposes_new_catalog_codes(
+    tmp_path, monkeypatch, dry_run
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
-    project = "generate_llm_catalog_write"
+    project = f"generate_llm_catalog_{dry_run}"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -196,44 +196,51 @@ def test_run_generate_model_metadata_llm_writes_catalog_merge(
     result = run_generate_model_metadata(
         project,
         api_key="test",
-        dry_run=False,
+        dry_run=dry_run,
     )
     catalog = config.load_business_semantics_catalog(project)
 
-    assert result["catalog_change_count"] == 2
-    assert result["catalog_update"]["updated"] is True
-    assert result["catalog_update"]["written_names"] == [
-        "business_processes",
-        "semantic_subjects",
-    ]
-    assert catalog["business_processes"] == [
-        {
-            "code": "ORDER_TRANSACTION",
-            "name": "Order Transaction",
-            "data_domain": "04",
-            "business_area": "SHOP",
-        }
-    ]
-    assert catalog["semantic_subjects"] == [
-        {
-            "code": "CUSTOMER",
-            "name": "客户",
-            "data_domain": "04",
-            "business_area": "SHOP",
-        }
-    ]
-    fact_model = yaml.safe_load(
-        (project_dir / "mid" / "models" / "dwd_order_detail.yaml").read_text(
-            encoding="utf-8"
-        )
+    assert result["catalog_change_count"] == 0
+    assert result["catalog_update"] is None
+    assert result["catalog_proposal_count"] == 2
+    assert result["publication"]["status"] == (
+        "dry_run" if dry_run else "published_with_quarantine"
     )
-    dimension_model = yaml.safe_load(
-        (project_dir / "mid" / "models" / "dim_customer.yaml").read_text(
-            encoding="utf-8"
-        )
+    assert result["publication"]["published"] is (not dry_run)
+    assert result["publication"]["candidate_status"] == "quarantined"
+    assert result["publication"]["validation"]["stage"] == (
+        "effective_candidate"
     )
-    assert fact_model["business_process"] == "ORDER_TRANSACTION"
-    assert dimension_model["semantic_subject"] == "CUSTOMER"
+    assert result["candidate_resolution"]["status"] == "quarantined"
+    assert result["candidate_resolution"]["quarantined_table_count"] == 2
+    candidate_models = result["candidate_models"]
+    if not dry_run:
+        candidate_models = {
+            path.stem: yaml.safe_load(path.read_text(encoding="utf-8"))
+            for path in (project_dir / "mid" / "models").glob("*.yaml")
+        }
+    assert all(
+        set(model["governance"]["withheld_sections"])
+        == set(config.MODEL_SECTIONS)
+        for model in candidate_models.values()
+    )
+    assert catalog["business_processes"] == []
+    assert catalog["semantic_subjects"] == []
+    assert (project_dir / "mid/models/dwd_order_detail.yaml").exists() is (
+        not dry_run
+    )
+    assert (project_dir / "mid/models/dim_customer.yaml").exists() is (
+        not dry_run
+    )
+    if not dry_run:
+        checkpoint_manifest = yaml.safe_load(
+            (project_dir / "mid_checkpoints/manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        audit = checkpoint_manifest["catalog_proposal_audit"]
+        assert audit["proposal_count"] == 2
+        assert audit["proposals"] == result["catalog_proposals"]
 
 
 def test_run_generate_model_metadata_preserves_governed_catalog_code_case(
@@ -279,44 +286,9 @@ def test_run_generate_model_metadata_preserves_governed_catalog_code_case(
 
     assert result["publication"]["status"] == "published"
     assert result["catalog_change_count"] == 0
+    assert result["catalog_proposals"] == []
     assert catalog["business_processes"][0]["code"] == "order_transaction"
     assert model["business_process"] == "order_transaction"
-
-
-def test_run_generate_model_metadata_update_catalog_false_skips_catalog_merge(
-    tmp_path, monkeypatch
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    project = "generate_llm_catalog_disabled"
-    project_dir = _write_catalog_project(
-        tmp_path,
-        monkeypatch,
-        project,
-        catalog=None,
-        ddl_tables=["dwd_order_detail"],
-    )
-    _install_generate_catalog_fake_inspector(
-        monkeypatch,
-        writer_module,
-        table_names=["dwd_order_detail"],
-        result_factory=lambda ctx: _generate_catalog_fact_result(ctx),
-    )
-
-    result = run_generate_model_metadata(
-        project,
-        api_key="test",
-        dry_run=False,
-        update_catalog=False,
-    )
-
-    assert result["catalog_initialized"] is False
-    assert result["catalog_update"] is None
-    assert result["catalog_change_count"] == 0
-    assert result["planned_catalog_updates"] == []
-    assert not (project_dir / "business_taxonomy.yaml").exists()
-    assert not (project_dir / "business_processes.yaml").exists()
-    assert not (project_dir / "semantic_subjects.yaml").exists()
 
 
 def test_run_generate_model_metadata_llm_catalog_merge_skips_blocked_results(
@@ -357,7 +329,8 @@ def test_run_generate_model_metadata_llm_catalog_merge_skips_blocked_results(
     )
     catalog = config.load_business_semantics_catalog(project)
 
-    assert result["catalog_change_count"] == 1
+    assert result["catalog_proposal_count"] == 1
+    assert result["catalog_proposals"][0]["code"] == "CUSTOMER"
     assert result["publication"]["status"] == "blocked"
     assert result["publication"]["published"] is False
     assert catalog["business_processes"] == []
@@ -378,7 +351,7 @@ def _refresh_catalog_models(*table_names):
     }
 
 
-def test_run_metadata_write_llm_dry_run_plans_catalog_merge_and_skeleton(
+def test_run_metadata_write_llm_dry_run_plans_proposals_and_skeleton(
     tmp_path, monkeypatch
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -404,8 +377,8 @@ def test_run_metadata_write_llm_dry_run_plans_catalog_merge_and_skeleton(
         api_key="test",
         dry_run=True,
     )
-    planned_codes = {
-        update["code"] for update in result["planned_catalog_updates"]
+    proposed_codes = {
+        proposal["code"] for proposal in result["catalog_proposals"]
     }
 
     assert result["catalog_initialized"] is True
@@ -414,14 +387,8 @@ def test_run_metadata_write_llm_dry_run_plans_catalog_merge_and_skeleton(
         "semantic_subjects",
         "taxonomy",
     ]
-    assert result["catalog_change_count"] == 2
-    assert result["catalog_update"]["updated"] is False
-    assert result["catalog_update"]["planned_written_names"] == [
-        "business_processes",
-        "semantic_subjects",
-        "taxonomy",
-    ]
-    assert planned_codes == {"ORDER_TRANSACTION", "CUSTOMER"}
+    assert result["catalog_proposal_count"] == 2
+    assert proposed_codes == {"ORDER_TRANSACTION", "CUSTOMER"}
     assert not (project_dir / "business_taxonomy.yaml").exists()
     assert not (project_dir / "business_processes.yaml").exists()
     assert not (project_dir / "semantic_subjects.yaml").exists()
@@ -434,15 +401,26 @@ def test_run_metadata_write_llm_dry_run_plans_catalog_merge_and_skeleton(
     )
 
     assert disabled["catalog_initialized"] is False
-    assert disabled["catalog_update"] is None
-    assert disabled["catalog_change_count"] == 0
-    assert disabled["planned_catalog_updates"] == []
+    assert disabled["catalog_proposal_count"] == 2
     assert not (project_dir / "business_taxonomy.yaml").exists()
     assert not (project_dir / "business_processes.yaml").exists()
     assert not (project_dir / "semantic_subjects.yaml").exists()
 
+    frozen = run_metadata_write(
+        project,
+        api_key="test",
+        dry_run=True,
+        business_semantics_catalog=_catalog_payload(
+            processes=[_order_detail_process("ORDER_TRANSACTION")],
+            subjects=[_customer_subject()],
+        ),
+    )
 
-def test_run_metadata_write_llm_writes_catalog_merge_without_expanding_taxonomy(
+    assert frozen["catalog_initialized"] is False
+    assert frozen["catalog_proposals"] == []
+
+
+def test_run_metadata_write_llm_reports_proposals_without_catalog_mutation(
     tmp_path, monkeypatch
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -497,34 +475,19 @@ def test_run_metadata_write_llm_writes_catalog_merge_without_expanding_taxonomy(
     )
     catalog = config.load_business_semantics_catalog(project)
 
-    assert result["catalog_change_count"] == 2
-    assert result["catalog_update"]["updated"] is True
-    assert result["catalog_update"]["written_names"] == [
-        "business_processes",
-        "semantic_subjects",
-    ]
+    assert result["catalog_proposal_count"] == 2
+    assert {item["code"] for item in result["catalog_proposals"]} == {
+        "ORDER_TRANSACTION",
+        "CUSTOMER",
+    }
     assert taxonomy["data_domains"] == [
         {"id": "04", "code": "TRAN", "name": "交易域"}
     ]
     assert taxonomy["business_areas"] == [
         {"id": "SHOP", "code": "SHOP", "name": "零售业务"}
     ]
-    assert catalog["business_processes"] == [
-        {
-            "code": "ORDER_TRANSACTION",
-            "name": "Order Transaction",
-            "data_domain": "",
-            "business_area": "",
-        }
-    ]
-    assert catalog["semantic_subjects"] == [
-        {
-            "code": "CUSTOMER",
-            "name": "客户",
-            "data_domain": "04",
-            "business_area": "SHOP",
-        }
-    ]
+    assert catalog["business_processes"] == []
+    assert catalog["semantic_subjects"] == []
 
 
 def _write_single_writer_project(
@@ -535,6 +498,7 @@ def _write_single_writer_project(
     mid_tables=("dwd_order_detail",),
     include_ods_ads=False,
     existing_models=None,
+    catalog=None,
 ):
     project_dir = tmp_path / project
     mid_ddl_dir = project_dir / "mid" / "ddl"
@@ -543,12 +507,14 @@ def _write_single_writer_project(
     mid_task_dir.mkdir(parents=True, exist_ok=True)
     for table_name in mid_tables:
         (mid_ddl_dir / f"{table_name}.sql").write_text(
-            f"CREATE TABLE {table_name} (id BIGINT);\n",
+            f"CREATE TABLE {table_name} "
+            "(id BIGINT, order_count BIGINT, sale_amount BIGINT, "
+            "subtotal BIGINT);\n",
             encoding="utf-8",
         )
         (mid_task_dir / f"{table_name}.sql").write_text(
             f"TRUNCATE TABLE {table_name};\n"
-            f"INSERT INTO {table_name} SELECT 1;\n",
+            f"INSERT INTO {table_name} SELECT 1, 1, 1, 1;\n",
             encoding="utf-8",
         )
     if include_ods_ads:
@@ -566,6 +532,13 @@ def _write_single_writer_project(
             "CREATE TABLE ads_sales_dashboard (id BIGINT);\n",
             encoding="utf-8",
         )
+        ads_task_dir = project_dir / "ads" / "tasks"
+        ads_task_dir.mkdir(parents=True, exist_ok=True)
+        (ads_task_dir / "ads_sales_dashboard.sql").write_text(
+            "TRUNCATE TABLE ads_sales_dashboard;\n"
+            "INSERT INTO ads_sales_dashboard SELECT 1;\n",
+            encoding="utf-8",
+        )
     for table_name, payload in (existing_models or {}).items():
         model_dir = project_dir / "mid" / "models"
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -573,7 +546,11 @@ def _write_single_writer_project(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
-    _write_split_catalog(project_dir, project, _catalog_payload())
+    _write_split_catalog(
+        project_dir,
+        project,
+        catalog if catalog is not None else _catalog_payload(),
+    )
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -666,7 +643,7 @@ def test_generate_single_writer_preserves_base_contract_when_llm_blocked(
             pass
 
         def inspect_batch(self, contexts):
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -678,6 +655,7 @@ def test_generate_single_writer_preserves_base_contract_when_llm_blocked(
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module,
@@ -720,6 +698,7 @@ def test_generate_single_writer_pass_keeps_ods_ads_base_models(
         project,
         mid_tables=("dwd_order_detail",),
         include_ods_ads=True,
+        catalog=_catalog_payload(processes=[{"code": "ORDER_TRANSACTION"}]),
     )
     seen_contexts = []
 
@@ -729,7 +708,7 @@ def test_generate_single_writer_pass_keeps_ods_ads_base_models(
 
         def inspect_batch(self, contexts):
             seen_contexts.extend(contexts)
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -752,6 +731,7 @@ def test_generate_single_writer_pass_keeps_ods_ads_base_models(
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module,
@@ -803,6 +783,7 @@ def test_generate_single_writer_pass_deletes_then_writes_final_models(
                 "table_type": "fact",
             }
         },
+        catalog=_catalog_payload(subjects=[{"code": "ORDER_DETAIL"}]),
     )
     model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
 
@@ -811,7 +792,7 @@ def test_generate_single_writer_pass_deletes_then_writes_final_models(
             pass
 
         def inspect_batch(self, contexts):
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -830,6 +811,7 @@ def test_generate_single_writer_pass_deletes_then_writes_final_models(
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module,
@@ -871,6 +853,7 @@ def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refi
                 "table_type": "fact",
             }
         },
+        catalog=_catalog_payload(processes=[{"code": "ORDER_TRANSACTION"}]),
     )
     model_path = project_dir / "mid" / "models" / "dws_order_summary.yaml"
 
@@ -879,7 +862,7 @@ def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refi
             pass
 
         def inspect_batch(self, contexts):
-            return [
+            results = [
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
@@ -902,6 +885,7 @@ def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refi
                 )
                 for ctx in contexts
             ]
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module,
@@ -962,11 +946,13 @@ def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
         "demo",
         fact_result,
         _catalog_payload(processes=[_order_detail_process()]),
-        {
-            "layer": "DWD",
-            "table_type": "fact",
-            "business_process": "ORDER_DETAIL",
-        },
+        CanonicalSemanticPayload(
+            {
+                "layer": "DWD",
+                "table_type": "fact",
+                "business_process": "ORDER_DETAIL",
+            }
+        ),
     )
 
     assert mapping["business_process"] == "ORDER_DETAIL"
@@ -986,11 +972,13 @@ def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
         "demo",
         dimension_result,
         _catalog_payload(subjects=[_customer_subject()]),
-        {
-            "layer": "DWD",
-            "table_type": "dimension",
-            "semantic_subject": "CUSTOMER",
-        },
+        CanonicalSemanticPayload(
+            {
+                "layer": "DWD",
+                "table_type": "dimension",
+                "semantic_subject": "CUSTOMER",
+            }
+        ),
     )
 
     assert mapping["semantic_subject"] == "CUSTOMER"
@@ -1145,16 +1133,19 @@ def test_run_metadata_write_report_uses_plan_prior(
 
     model_metadata = {
         "dwd_customer": {
+            "version": 2,
             "name": "dwd_customer",
             "layer": "DWD",
             "table_type": "fact",
         },
         "dwd_order_detail": {
+            "version": 2,
             "name": "dwd_order_detail",
             "layer": "DWD",
             "table_type": "fact",
         },
         "dws_store_sales_daily": {
+            "version": 2,
             "name": "dws_store_sales_daily",
             "layer": "DWS",
             "table_type": "fact",
@@ -1192,7 +1183,7 @@ def test_run_metadata_write_report_uses_plan_prior(
                             reasoning_steps=[],
                         )
                     )
-            return results
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module, "load_lineage_data", lambda project: sample_lineage_data
@@ -1222,7 +1213,7 @@ def test_run_metadata_write_report_uses_plan_prior(
     )
 
 
-def test_run_metadata_write_discovers_related_entity_from_dws_grain(
+def test_refresh_does_not_publish_unconfirmed_related_entity_from_dws_grain(
     monkeypatch, tmp_path, isolated_writer_project
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -1349,38 +1340,29 @@ def test_run_metadata_write_discovers_related_entity_from_dws_grain(
                             },
                         )
                     )
-            return results
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(
         writer_module, "load_lineage_data", lambda project: lineage_data
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    run_metadata_write(
+    result = run_metadata_write(
         isolated_writer_project, api_key="test", write_scope="grain"
     )
 
     saved = yaml.safe_load(
         (models_dir / "dwd_product.yaml").read_text(encoding="utf-8")
     )
-
-    assert saved["entities"] == [
-        {
-            "code": "PROD",
-            "type": "primary",
-            "key_columns": ["product_id"],
-        },
-        {
-            "code": "CAT",
-            "type": "foreign",
-            "name": "品类",
-            "key_columns": ["category_id"],
-            "relationship": {
-                "type": "many_to_one",
-                "from_entity": "PROD",
-            },
-        },
-    ]
+    transitions = result["publication"]["refresh_transition"]["transitions"]
+    entity_transition = next(
+        item
+        for item in transitions
+        if item["table"] == "dwd_product" and item["section"] == "entities"
+    )
+    assert result["publication"]["status"] == "published"
+    assert entity_transition["action"] == "retain_existing_active"
+    assert "entities" not in saved
 
 
 def test_run_catalog_discovery_writes_catalog_from_llm_results(
@@ -1697,6 +1679,64 @@ def test_run_catalog_metadata_write_removes_stale_business_codes(
     assert dim_model["business_area"] == "SHOP"
     assert "business_process" not in dim_model
     assert "semantic_subject" not in dim_model
+
+
+def test_catalog_write_reports_published_when_only_finalization_fails(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+    from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+        MetadataPublicationOutcome,
+        MetadataPublicationRecoveryRequired,
+    )
+
+    project = "catalog_writer_finalize_failure"
+    _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_order_detail"],
+        models={
+            "dwd_order_detail": {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+                "business_process": "STALE_PROCESS",
+            }
+        },
+    )
+
+    def publish_then_fail(_project, rendered_files, **_kwargs):
+        for path, content in rendered_files.items():
+            path.write_text(content, encoding="utf-8")
+        outcome = MetadataPublicationOutcome(
+            formal_files_state="published",
+            finalization_status="failed",
+            recovery_required=True,
+            transaction_id="tx-finalize-failure",
+        )
+        raise MetadataPublicationRecoveryRequired(
+            "cleanup failed",
+            outcome=outcome,
+        )
+
+    monkeypatch.setattr(
+        writer_module,
+        "transactional_metadata_publication",
+        publish_then_fail,
+    )
+
+    result = run_catalog_metadata_write(
+        project, dry_run=False, write_scope="business"
+    )
+
+    assert result["model_update_count"] == 1
+    assert result["model_updates"][0]["updated"] is True
+    assert result["publication"]["status"] == "published"
+    assert result["publication"]["finalization_status"] == "failed"
+    assert result["publication"]["recovery_required"] is True
 
 
 def test_run_catalog_metadata_write_removes_subject_from_fact_models(

@@ -8,13 +8,46 @@ import threading
 import urllib.request
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any, Callable
+from urllib.error import HTTPError
 from urllib.parse import urlparse
 
 from dw_refactor_agent.assessment.llm.context_builder import TableContext
+from dw_refactor_agent.assessment.llm.inspection_cache_policy import (
+    InspectionCachePolicy,
+    InspectionReuseStats,
+    InvalidInspectionCacheError,
+    inspection_reuse_decision,
+)
 from dw_refactor_agent.assessment.llm.inspection_contract import (
     validate_generate_inspection_contract,
+)
+from dw_refactor_agent.assessment.llm.inspection_issues import (
+    LEGACY_VALIDATION_ISSUE_CODES,
+    InspectionAuthenticationError,
+    InspectionBoundaryError,
+    InspectionConfigurationError,
+    InspectionContentParseError,
+    InspectionInternalError,
+    InspectionIssue,
+    InspectionRequestRejectedError,
+    InspectionTransportError,
+    IssueEvidence,
+    ParsedInspectionCandidate,
+    RawInspectionResponse,
+    UnknownInspectionIssueError,
+    is_legacy_validation_issue,
+    issue_for_code,
+    issues_from_validation,
+    issues_to_dicts,
+    sort_issues,
+)
+from dw_refactor_agent.assessment.llm.inspection_recovery import (
+    InspectionRepair,
+    RecoveredInspectionCandidate,
+    recover_inspection_result,
 )
 from dw_refactor_agent.assessment.project_facts.entity_metadata import (
     legacy_entity_from_entities,
@@ -27,7 +60,7 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v45"
+PROMPT_VERSION = "table-inspector-v47"
 VALID_LAYERS = {"DWD", "DWS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "bridge", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -62,6 +95,7 @@ VALIDATION_ERROR_KEYS = (
     "inconsistent_upstream_metric_layers",
     "business_process_missing",
     "business_process_ambiguous",
+    "composite_process_invalid",
     "bridge_entities_invalid",
     "bridge_grain_invalid",
     "bridge_semantics_invalid",
@@ -86,6 +120,8 @@ ORCHESTRATION_VALIDATION_KEYS = frozenset(
 DEFAULT_DEEPSEEK_CHAT_COMPLETIONS_URL = (
     "https://api.deepseek.com/chat/completions"
 )
+AUTHENTICATION_HTTP_STATUS_CODES = frozenset({401, 403})
+RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 409, 425, 429})
 NON_METRIC_AGGREGATE_FUNCTIONS = {
     "ANY_VALUE",
     "ARBITRARY",
@@ -142,6 +178,11 @@ def _valid_business_process(value: Any) -> str:
     return text
 
 
+def _valid_business_process_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode == "composite" else ""
+
+
 def _format_layered_tables(
     tables: list[str],
     layers: dict[str, str],
@@ -181,10 +222,18 @@ class TableInspectResult:
     confidence: float
     reasoning_steps: list[str]
     business_process: str = ""
+    business_process_mode: str = ""
+    business_process_sources: list[str] = field(default_factory=list)
+    business_process_conflicts: list[str] = field(default_factory=list)
     columns: dict[str, list[dict[str, Any]]] = field(
         default_factory=_empty_columns
     )
     validation: dict[str, list[str]] = field(default_factory=dict)
+    issues: tuple[InspectionIssue, ...] = field(default_factory=tuple)
+    raw_response: RawInspectionResponse | None = None
+    parsed_candidate: ParsedInspectionCandidate | None = None
+    recovered_candidate: RecoveredInspectionCandidate | None = None
+    repair_audit: tuple[InspectionRepair, ...] = field(default_factory=tuple)
     retry_count: int = 0
     first_attempt_inferred_layer: str = ""
     inferred_data_domain: str = ""
@@ -196,12 +245,31 @@ class TableInspectResult:
     related_entities: list[dict[str, Any]] = field(default_factory=list)
     grain: dict[str, Any] = field(default_factory=dict)
     context_hash: str = ""
+    catalog_snapshot_hash: str = ""
+    asset_manifest_hash: str = ""
     reuse_source: str = ""
     resume_eligible: bool = True
 
     def __post_init__(self) -> None:
         self.confidence = _safe_float(self.confidence)
         self.business_process = _valid_business_process(self.business_process)
+        self.business_process_mode = _valid_business_process_mode(
+            self.business_process_mode
+        )
+        self.business_process_sources = list(
+            dict.fromkeys(
+                str(source).strip()
+                for source in self.business_process_sources
+                if str(source).strip()
+            )
+        )
+        self.business_process_conflicts = list(
+            dict.fromkeys(
+                str(metric).strip()
+                for metric in self.business_process_conflicts
+                if str(metric).strip()
+            )
+        )
         self.entities = normalize_entities(
             self.entities,
             self.entity,
@@ -254,6 +322,14 @@ class TableInspectResult:
     @property
     def status(self) -> str:
         """返回 passed/warning/blocked，供回写流程做安全决策。"""
+        unknown_keys = set(self.validation) - set(
+            LEGACY_VALIDATION_ISSUE_CODES
+        )
+        if unknown_keys:
+            raise UnknownInspectionIssueError(
+                "unregistered inspection validation keys: "
+                + ", ".join(sorted(unknown_keys))
+            )
         if self.confidence <= 0:
             return "blocked"
         if any(self.validation.get(key) for key in VALIDATION_ERROR_KEYS):
@@ -439,6 +515,12 @@ def build_prompt(ctx: TableContext) -> str:
 ## 上游指标分组
 {json.dumps(ctx.upstream_metric_groups, ensure_ascii=False, indent=2) if ctx.upstream_metric_groups else "无"}
 
+## 上游指标语义状态
+{json.dumps(ctx.upstream_metric_group_status, ensure_ascii=False, indent=2) if ctx.upstream_metric_group_status else "无"}
+
+## 当前表已声明业务语义状态
+{json.dumps(ctx.declared_business_semantics_status, ensure_ascii=False, indent=2)}
+
 ## 思考步骤
 1. 从键、字段血缘和 ETL 判断输入与输出行粒度，检查所有查询阶段是否发生多行压缩或聚合；对 JOIN 聚合先区分“发布业务指标”和“补充查询属性”。
 2. 判断每行是否表达业务事件、周期状态或参与/成员/责任/归属关系；关系桥不要求必须有日期或状态变化。再检查它是否实际只是决定计价、计算、入账、分类或解释方式的参数配置映射，后者才归参考维度。
@@ -575,7 +657,7 @@ def build_retry_prompt(
 - inconsistent_layer_sql 表示 DWD 候选的目标行驱动查询存在 GROUP BY 并压缩目标粒度；必须根据公共聚合粒度重新判断。仅在 JOIN 辅助子查询中聚合以补充日期/属性、主驱动行仍逐行保留时，可以继续返回 DWD。
 - ambiguous_min_max_aggregation 表示代码无法仅凭同名 MIN/MAX 判断它是技术选值还是业务汇总；如果输出是业务统计结果，应归入指标字段并返回 DWS，如果只是保留实体最新/最早技术状态，可继续返回 DWD，并在字段 reason 中说明技术选值依据。
 - inconsistent_upstream_metric_layers 表示 DWD 候选把独立上游指标源中的公共指标 JOIN 到目标分析粒度并继续发布；应返回 DWS/fact 并保留正确的上游指标依赖关系。单一明细来源的逐行透传不属于此错误。
-- business_process_missing / business_process_ambiguous 表示 fact 的表级和字段级业务过程没有共同形成唯一一致 code；字段级 process 为空时可继承唯一表级 code，非空时必须与表级 code 一致，真实多过程且无法确定主过程时保持空并让发布安全阻断。
+- business_process_missing / business_process_ambiguous 表示 fact 的表级和字段级业务过程没有共同形成唯一一致 code；字段级 process 为空时可继承唯一表级 code，非空时必须与表级 code 一致。真实多过程且无法确定主过程时保持空；系统仅在 DWS 有至少两个上游真实贡献指标时确定性记录 composite 来源，否则继续安全阻断。
 - bridge_entities_invalid / bridge_grain_invalid 表示关系桥必须包含至少两个不同参与实体，且 grain.entities 必须完整覆盖这些实体；bridge_semantics_invalid 表示关系桥错误携带了 business_process 或指标，必须清空业务过程和三个指标分组。
 - duplicate_entity_codes 表示多个实体复用了同一 code；同一业务实体承担不同角色时必须使用可区分的角色 code，不能由 writer 猜测合并或改名。
 - entity_key_missing 表示 entity 缺少 key_columns 或 key 不在 DDL 中；grain_entity_unknown / grain_column_missing 表示 grain 引用了未声明实体或不存在字段，必须只使用本次 JSON 与 DDL 中真实存在的值。
@@ -776,65 +858,204 @@ def _normalize_columns(raw_columns: Any) -> dict[str, list[dict[str, Any]]]:
     return columns
 
 
-def parse_response(
-    table_name: str, response: dict, declared_layer: str = ""
-) -> TableInspectResult:
-    content = (
-        response.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-        .strip()
-    )
-    content = _strip_markdown_json(content)
+def _response_content(response: dict[str, Any]) -> str:
+    if not isinstance(response, dict):
+        raise InspectionContentParseError(
+            "API response envelope must be a JSON object"
+        )
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise InspectionContentParseError(
+            "API response envelope has no choices"
+        )
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise InspectionContentParseError(
+            "API response choice must be an object"
+        )
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise InspectionContentParseError(
+            "API response choice has no message object"
+        )
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise InspectionContentParseError(
+            "API response message content must be a non-empty string"
+        )
+    return _strip_markdown_json(content)
 
+
+def _parse_failure_result(
+    *,
+    table_name: str,
+    declared_layer: str,
+    raw_response: RawInspectionResponse,
+    error: InspectionContentParseError,
+) -> TableInspectResult:
+    return TableInspectResult(
+        table_name=table_name,
+        declared_layer=str(declared_layer or ""),
+        inferred_layer="OTHER",
+        table_type="other",
+        confidence=0.0,
+        reasoning_steps=[f"JSON 解析失败: {error}"],
+        issues=(error.to_issue(table_name),),
+        raw_response=raw_response,
+    )
+
+
+def parse_response(
+    table_name: str,
+    response: dict,
+    declared_layer: str = "",
+    *,
+    raw_response: RawInspectionResponse | None = None,
+) -> TableInspectResult:
+    if raw_response is None:
+        body = json.dumps(
+            response,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        raw_response = RawInspectionResponse.create(
+            table_name=table_name,
+            model="",
+            endpoint="",
+            context_hash="",
+            body=body,
+        )
     try:
+        content = _response_content(response)
         data = json.loads(content)
-        return TableInspectResult(
+        if not isinstance(data, dict):
+            raise InspectionContentParseError(
+                "inspection candidate must be a JSON object"
+            )
+        try:
+            parsed_candidate = ParsedInspectionCandidate.create(
+                table_name=table_name,
+                raw_response_hash=raw_response.content_hash,
+                payload=data,
+            )
+        except (TypeError, ValueError) as error:
+            raise InspectionContentParseError(
+                f"inspection candidate is not losslessly serializable: {error}"
+            ) from error
+    except json.JSONDecodeError as error:
+        parse_error = InspectionContentParseError(str(error))
+        parse_error.__cause__ = error
+        return _parse_failure_result(
             table_name=table_name,
-            declared_layer=str(declared_layer or ""),
-            inferred_layer=_valid_layer(data.get("inferred_layer")),
-            table_type=_valid_table_type(data.get("table_type")),
-            business_process=_valid_business_process(
-                data.get("business_process")
-            ),
-            confidence=_safe_float(data.get("confidence")),
-            reasoning_steps=list(data.get("reasoning_steps", []) or []),
-            columns=_normalize_columns(data.get("columns")),
-            inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
-            inferred_business_area=_safe_str(
-                data.get("inferred_business_area")
-            ).upper(),
-            dimension_role=_valid_dimension_role(data.get("dimension_role")),
-            dimension_content_type=_valid_dimension_content_type(
-                data.get("dimension_content_type")
-            ),
-            entities=normalize_entities(
-                data.get("entities"),
-                data.get("entity"),
-                data.get("related_entities"),
-            ),
-            entity=_safe_dict(data.get("entity")),
-            related_entities=_safe_dict_list(data.get("related_entities")),
-            grain=_normalize_grain(data.get("grain")),
+            declared_layer=declared_layer,
+            raw_response=raw_response,
+            error=parse_error,
         )
-    except json.JSONDecodeError as e:
-        return TableInspectResult(
+    except InspectionContentParseError as error:
+        return _parse_failure_result(
             table_name=table_name,
-            declared_layer=str(declared_layer or ""),
-            inferred_layer="OTHER",
-            table_type="other",
-            confidence=0.0,
-            reasoning_steps=[f"JSON 解析失败: {e}\n原文: {content}"],
+            declared_layer=declared_layer,
+            raw_response=raw_response,
+            error=error,
         )
+
+    return TableInspectResult(
+        table_name=table_name,
+        declared_layer=str(declared_layer or ""),
+        inferred_layer=_valid_layer(data.get("inferred_layer")),
+        table_type=_valid_table_type(data.get("table_type")),
+        business_process=_valid_business_process(data.get("business_process")),
+        confidence=_safe_float(data.get("confidence")),
+        reasoning_steps=_safe_list(data.get("reasoning_steps")),
+        columns=_normalize_columns(data.get("columns")),
+        inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
+        inferred_business_area=_safe_str(
+            data.get("inferred_business_area")
+        ).upper(),
+        dimension_role=_valid_dimension_role(data.get("dimension_role")),
+        dimension_content_type=_valid_dimension_content_type(
+            data.get("dimension_content_type")
+        ),
+        entities=normalize_entities(
+            data.get("entities"),
+            data.get("entity"),
+            data.get("related_entities"),
+        ),
+        entity=_safe_dict(data.get("entity")),
+        related_entities=_safe_dict_list(data.get("related_entities")),
+        grain=_normalize_grain(data.get("grain")),
+        raw_response=raw_response,
+        parsed_candidate=parsed_candidate,
+    )
+
+
+def synchronize_result_issues(
+    result: TableInspectResult,
+) -> tuple[InspectionIssue, ...]:
+    """Rebuild typed issues from the current compatibility validation view."""
+    typed_issues = [
+        issue
+        for issue in result.issues
+        if not is_legacy_validation_issue(issue)
+    ]
+    compatibility_validation = {
+        key: list(values) for key, values in (result.validation or {}).items()
+    }
+    recovery_validation_keys = {
+        "hallucinated_column_reference": "unknown_columns",
+        "column_group_conflict_metric": "duplicate_columns",
+        "column_group_conflict_structure": "duplicate_columns",
+        "missing_ddl_column": "missing_columns",
+    }
+    for issue in typed_issues:
+        validation_key = recovery_validation_keys.get(issue.code)
+        if not validation_key:
+            continue
+        covered_items = set(issue.items)
+        compatibility_validation[validation_key] = [
+            value
+            for value in compatibility_validation.get(validation_key, [])
+            if value not in covered_items
+        ]
+    typed_issues.extend(
+        issues_from_validation(result, compatibility_validation)
+    )
+    if (
+        result.confidence <= 0
+        and result.parsed_candidate is not None
+        and not any(
+            issue.code
+            in {
+                "inspection_transport_failed",
+                "inspection_content_parse_failed",
+            }
+            for issue in typed_issues
+        )
+    ):
+        typed_issues.append(
+            issue_for_code(
+                "inspection_low_confidence",
+                table=result.table_name,
+                path="confidence",
+                items=(result.confidence,),
+            )
+        )
+    result.issues = sort_issues(typed_issues)
+    return result.issues
 
 
 def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
+    current_issues = synchronize_result_issues(result)
     return {
         "table_name": result.table_name,
         "declared_layer": result.declared_layer,
         "inferred_layer": result.inferred_layer,
         "table_type": result.table_type,
         "business_process": result.business_process,
+        "business_process_mode": result.business_process_mode,
+        "business_process_sources": result.business_process_sources,
+        "business_process_conflicts": result.business_process_conflicts,
         "inferred_data_domain": result.inferred_data_domain,
         "inferred_business_area": result.inferred_business_area,
         "dimension_role": result.dimension_role,
@@ -847,6 +1068,23 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
         "related_entities": result.related_entities,
         "grain": result.grain,
         "validation": result.validation,
+        "issues": issues_to_dicts(current_issues),
+        "raw_response": (
+            result.raw_response.to_dict()
+            if result.raw_response is not None
+            else None
+        ),
+        "parsed_candidate": (
+            result.parsed_candidate.to_dict()
+            if result.parsed_candidate is not None
+            else None
+        ),
+        "recovered_candidate": (
+            result.recovered_candidate.to_dict()
+            if result.recovered_candidate is not None
+            else None
+        ),
+        "repair_audit": [repair.to_dict() for repair in result.repair_audit],
         "status": result.status,
         "retry_count": result.retry_count,
         "first_attempt_inferred_layer": result.first_attempt_inferred_layer,
@@ -854,14 +1092,63 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
     }
 
 
+CACHE_RESULT_FIELDS_V1 = frozenset(
+    {
+        "cache_policy",
+        "table_name",
+        "declared_layer",
+        "inferred_layer",
+        "table_type",
+        "business_process",
+        "business_process_mode",
+        "business_process_sources",
+        "business_process_conflicts",
+        "inferred_data_domain",
+        "inferred_business_area",
+        "dimension_role",
+        "dimension_content_type",
+        "confidence",
+        "reasoning_steps",
+        "columns",
+        "entities",
+        "entity",
+        "related_entities",
+        "grain",
+        "validation",
+        "issues",
+        "raw_response",
+        "parsed_candidate",
+        "retry_count",
+        "first_attempt_inferred_layer",
+        "context_hash",
+        "catalog_snapshot_hash",
+        "asset_manifest_hash",
+        "resume_eligible",
+    }
+)
+CACHE_RESULT_FIELDS = CACHE_RESULT_FIELDS_V1 | {
+    "recovered_candidate",
+    "repair_audit",
+}
+
+
 def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
     """仅保存恢复巡检结果所需字段，派生字段由读取后重新计算。"""
+    current_issues = synchronize_result_issues(result)
     return {
+        "cache_policy": InspectionCachePolicy(
+            context_hash=result.context_hash,
+            catalog_snapshot_hash=result.catalog_snapshot_hash,
+            asset_manifest_hash=result.asset_manifest_hash,
+        ).to_dict(),
         "table_name": result.table_name,
         "declared_layer": result.declared_layer,
         "inferred_layer": result.inferred_layer,
         "table_type": result.table_type,
         "business_process": result.business_process,
+        "business_process_mode": result.business_process_mode,
+        "business_process_sources": result.business_process_sources,
+        "business_process_conflicts": result.business_process_conflicts,
         "inferred_data_domain": result.inferred_data_domain,
         "inferred_business_area": result.inferred_business_area,
         "dimension_role": result.dimension_role,
@@ -874,20 +1161,81 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
         "related_entities": result.related_entities,
         "grain": result.grain,
         "validation": result.validation,
+        "issues": issues_to_dicts(current_issues),
+        "raw_response": (
+            result.raw_response.to_dict()
+            if result.raw_response is not None
+            else None
+        ),
+        "parsed_candidate": (
+            result.parsed_candidate.to_dict()
+            if result.parsed_candidate is not None
+            else None
+        ),
+        "recovered_candidate": (
+            result.recovered_candidate.to_dict()
+            if result.recovered_candidate is not None
+            else None
+        ),
+        "repair_audit": [repair.to_dict() for repair in result.repair_audit],
         "retry_count": result.retry_count,
         "first_attempt_inferred_layer": result.first_attempt_inferred_layer,
+        "context_hash": result.context_hash,
+        "catalog_snapshot_hash": result.catalog_snapshot_hash,
+        "asset_manifest_hash": result.asset_manifest_hash,
+        "resume_eligible": result.resume_eligible,
     }
+
+
+def cache_result_digest(result_data: dict[str, Any]) -> str:
+    content = json.dumps(
+        result_data,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(content.encode(TEXT_ENCODING)).hexdigest()
 
 
 def dict_to_result(
     data: dict[str, Any], *, table_name: str = "", declared_layer: str = ""
 ) -> TableInspectResult:
+    if "cache_policy" in data:
+        cache_policy = InspectionCachePolicy.from_dict(data["cache_policy"])
+        expected_fields = (
+            CACHE_RESULT_FIELDS_V1
+            if cache_policy.schema_version == 1
+            else CACHE_RESULT_FIELDS
+        )
+        if set(data) != expected_fields:
+            raise InvalidInspectionCacheError(
+                "inspection cache result fields are incomplete or unknown"
+            )
+    raw_issues = data.get("issues") or []
+    if not isinstance(raw_issues, list):
+        raise ValueError("inspection result issues must be a list")
+    raw_response_data = data.get("raw_response")
+    parsed_candidate_data = data.get("parsed_candidate")
+    recovered_candidate_data = data.get("recovered_candidate")
+    raw_repair_audit = data.get("repair_audit") or []
+    if not isinstance(raw_repair_audit, list):
+        raise ValueError("inspection repair audit must be a list")
     return TableInspectResult(
         table_name=str(data.get("table_name") or table_name),
         declared_layer=str(data.get("declared_layer") or declared_layer),
         inferred_layer=_valid_layer(data.get("inferred_layer")),
         table_type=_valid_table_type(data.get("table_type")),
         business_process=_valid_business_process(data.get("business_process")),
+        business_process_mode=_valid_business_process_mode(
+            data.get("business_process_mode")
+        ),
+        business_process_sources=_safe_list(
+            data.get("business_process_sources")
+        ),
+        business_process_conflicts=_safe_list(
+            data.get("business_process_conflicts")
+        ),
         confidence=_safe_float(data.get("confidence")),
         reasoning_steps=list(data.get("reasoning_steps", []) or []),
         columns=_normalize_columns(data.get("columns")),
@@ -900,6 +1248,25 @@ def dict_to_result(
         related_entities=_safe_dict_list(data.get("related_entities")),
         grain=_normalize_grain(data.get("grain")),
         validation=_normalize_validation(data.get("validation")),
+        issues=tuple(InspectionIssue.from_dict(issue) for issue in raw_issues),
+        raw_response=(
+            RawInspectionResponse.from_dict(raw_response_data)
+            if raw_response_data is not None
+            else None
+        ),
+        parsed_candidate=(
+            ParsedInspectionCandidate.from_dict(parsed_candidate_data)
+            if parsed_candidate_data is not None
+            else None
+        ),
+        recovered_candidate=(
+            RecoveredInspectionCandidate.from_dict(recovered_candidate_data)
+            if recovered_candidate_data is not None
+            else None
+        ),
+        repair_audit=tuple(
+            InspectionRepair.from_dict(repair) for repair in raw_repair_audit
+        ),
         retry_count=int(data.get("retry_count", 0) or 0),
         first_attempt_inferred_layer=_valid_layer(
             data.get("first_attempt_inferred_layer")
@@ -913,43 +1280,27 @@ def dict_to_result(
         dimension_content_type=_valid_dimension_content_type(
             data.get("dimension_content_type")
         ),
+        context_hash=str(data.get("context_hash") or ""),
+        catalog_snapshot_hash=str(data.get("catalog_snapshot_hash") or ""),
+        asset_manifest_hash=str(data.get("asset_manifest_hash") or ""),
+        resume_eligible=bool(data.get("resume_eligible", True)),
     )
 
 
 def _normalize_validation(value: Any) -> dict[str, list[str]]:
     if not isinstance(value, dict):
         return {}
+    unknown_keys = set(value) - set(LEGACY_VALIDATION_ISSUE_CODES)
+    if unknown_keys:
+        raise UnknownInspectionIssueError(
+            "unregistered inspection validation keys: "
+            + ", ".join(sorted(str(key) for key in unknown_keys))
+        )
     normalized = {}
-    for key in (
-        "unknown_columns",
-        "duplicate_columns",
-        "missing_columns",
-        "missing_base_metrics",
-        "missing_base_metric_tables",
-        "invalid_base_metrics",
-        "invalid_base_metric_tables",
-        "ambiguous_base_metrics",
-        "invalid_time_periods",
-        "invalid_metric_expressions",
-        "missing_primary_entities",
-        "inconsistent_layer_table_types",
-        "inconsistent_layer_sql",
-        "inconsistent_upstream_metric_layers",
-        "business_process_missing",
-        "business_process_ambiguous",
-        "duplicate_entity_codes",
-        "entity_key_missing",
-        "grain_entity_unknown",
-        "grain_column_missing",
-        "dimension_primary_entity_invalid",
-        AMBIGUOUS_MIN_MAX_WARNING_KEY,
-        DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
-        RESOLUTION_REINSPECTION_ERROR_KEY,
-        METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
-    ):
-        raw_items = value.get(key, []) or []
-        if isinstance(raw_items, list):
-            normalized[key] = [str(item) for item in raw_items]
+    for key, raw_items in value.items():
+        if not isinstance(raw_items, list):
+            raise ValueError(f"inspection validation {key!r} must be a list")
+        normalized[str(key)] = [str(item) for item in raw_items]
     return normalized
 
 
@@ -1406,14 +1757,6 @@ def _matching_table_identities(
     if "." in wanted:
         if wanted in canonical_identities:
             return [wanted]
-        short_matches = sorted(
-            identity
-            for identity in canonical_identities
-            if _canonical_short_table_name(identity)
-            == _canonical_short_table_name(wanted)
-        )
-        if len(short_matches) == 1 and "." not in short_matches[0]:
-            return short_matches
         return []
     short_name = _canonical_short_table_name(wanted)
     return sorted(
@@ -1623,36 +1966,6 @@ def _actual_upstream_tables(ctx: TableContext) -> set[str]:
     }
 
 
-def enrich_metric_relationships(
-    result: TableInspectResult, ctx: TableContext
-) -> None:
-    """补齐可唯一判断的派生指标 base_metric_table。"""
-    atomic_metric_tables = _atomic_metric_tables_for_validation(result, ctx)
-    for metric in result.derived_metrics:
-        if str(metric.get("base_metric_table") or "").strip():
-            continue
-        base_metric = str(metric.get("base_metric") or "").strip()
-        if not base_metric:
-            continue
-        candidates = _base_metric_candidate_tables(
-            base_metric,
-            atomic_metric_tables,
-        )
-        if not candidates:
-            known_group_tables = _known_upstream_metric_group_tables(ctx)
-            candidates = [
-                table_name
-                for table_name in _lineage_base_metric_tables(
-                    ctx,
-                    target_metric=str(metric.get("name") or ""),
-                    base_metric=base_metric,
-                )
-                if table_name not in known_group_tables
-            ]
-        if len(candidates) == 1:
-            metric["base_metric_table"] = candidates[0]
-
-
 def validate_metric_relationships(
     result: TableInspectResult, ctx: TableContext
 ) -> dict[str, list[str]]:
@@ -1762,14 +2075,29 @@ def validate_inspection_result(
     validate_publication_contract: bool = False,
 ) -> TableInspectResult:
     """Rebuild deterministic validation after a result is transformed."""
+    recovered = recover_inspection_result(result, ctx)
+    result.__dict__.clear()
+    result.__dict__.update(recovered.__dict__)
+    recovery_validation: dict[str, list[str]] = {}
+    for issue in result.issues:
+        validation_key = {
+            "hallucinated_column_reference": "unknown_columns",
+            "column_group_conflict_metric": "duplicate_columns",
+            "column_group_conflict_structure": "duplicate_columns",
+            "missing_ddl_column": "missing_columns",
+        }.get(issue.code)
+        if validation_key:
+            recovery_validation.setdefault(validation_key, []).extend(
+                issue.items
+            )
     orchestration_validation = {
         key: list(values)
         for key, values in (result.validation or {}).items()
         if key in ORCHESTRATION_VALIDATION_KEYS and values
     }
     ddl_columns = _extract_ddl_column_names(ctx.ddl)
-    enrich_metric_relationships(result, ctx)
     result.validation = _merge_validation(
+        recovery_validation,
         validate_columns(result, ddl_columns),
         validate_time_periods(result),
         validate_metric_expressions(result),
@@ -1788,6 +2116,7 @@ def validate_inspection_result(
         ),
         orchestration_validation,
     )
+    synchronize_result_issues(result)
     return result
 
 
@@ -1805,6 +2134,8 @@ class TableInspector:
         min_cacheable_confidence: float = DEFAULT_MIN_CACHEABLE_CONFIDENCE,
         resume_cache: dict[str, Any] | None = None,
         validate_publication_contract: bool = False,
+        catalog_snapshot_hash: str = "",
+        asset_manifest_hash: str = "",
     ):
         self.api_key = api_key
         self.model = model
@@ -1816,10 +2147,13 @@ class TableInspector:
         self.min_cacheable_confidence = float(min_cacheable_confidence)
         self.cache = {}
         self.resume_cache = dict(resume_cache or {})
+        self.catalog_snapshot_hash = str(catalog_snapshot_hash or "")
+        self.asset_manifest_hash = str(asset_manifest_hash or "")
         self.validate_publication_contract = bool(
             validate_publication_contract
         )
         self._cache_lock = threading.RLock()
+        self._reuse_stats = InspectionReuseStats()
         self.progress_callback: Callable[[dict[str, Any]], None] | None = None
         self.result_callback: Callable[[TableInspectResult], None] | None = (
             None
@@ -1832,9 +2166,10 @@ class TableInspector:
         with self._cache_lock:
             if self.cache_file and self.cache_file.exists():
                 try:
-                    self.cache = json.loads(
+                    payload = json.loads(
                         self.cache_file.read_text(encoding=TEXT_ENCODING)
                     )
+                    self.cache = payload if isinstance(payload, dict) else {}
                 except Exception:
                     self.cache = {}
 
@@ -1846,6 +2181,10 @@ class TableInspector:
                     json.dumps(self.cache, ensure_ascii=False, indent=2),
                     encoding=TEXT_ENCODING,
                 )
+
+    def reuse_report(self) -> dict[str, Any]:
+        """Return cache/checkpoint hit, invalidation, and replay statistics."""
+        return self._reuse_stats.report()
 
     def _purge_invalidated_cache_variants(self) -> bool:
         """Persistently remove cache entries rejected by generate."""
@@ -1861,47 +2200,47 @@ class TableInspector:
                     )
                     if value
                 }
-                cached_data = self.cache.get(table_name)
-                if not invalid_hashes or not isinstance(cached_data, dict):
-                    continue
-                raw_variants = cached_data.get("variants")
-                variants = (
-                    dict(raw_variants)
-                    if isinstance(raw_variants, dict)
-                    else {}
-                )
-                retained_variants = {
-                    cache_hash: variant
-                    for cache_hash, variant in variants.items()
-                    if cache_hash not in invalid_hashes
-                }
-                current_hash = str(cached_data.get("hash") or "")
-                if current_hash in invalid_hashes:
-                    if not retained_variants:
-                        self.cache.pop(table_name, None)
-                    else:
-                        replacement_hash, replacement = list(
-                            retained_variants.items()
-                        )[-1]
-                        replacement_result = (
-                            replacement.get("result")
-                            if isinstance(replacement, dict)
-                            else None
-                        )
-                        if not isinstance(replacement_result, dict):
-                            self.cache.pop(table_name, None)
-                        else:
-                            self.cache[table_name] = {
-                                "hash": replacement_hash,
-                                "result": replacement_result,
-                                "variants": retained_variants,
-                            }
-                    changed = True
-                    continue
-                if retained_variants != variants:
-                    cached_data["variants"] = retained_variants
-                    changed = True
+                for context_hash in invalid_hashes:
+                    changed = (
+                        self._remove_cached_variant(table_name, context_hash)
+                        or changed
+                    )
         return changed
+
+    def _remove_cached_variant(
+        self,
+        table_name: str,
+        context_hash: str,
+    ) -> bool:
+        cached_data = self.cache.get(table_name)
+        if not isinstance(cached_data, dict):
+            return False
+        raw_variants = cached_data.get("variants")
+        variants = dict(raw_variants) if isinstance(raw_variants, dict) else {}
+        removed = variants.pop(context_hash, None) is not None
+        if str(cached_data.get("hash") or "") != context_hash:
+            if removed:
+                cached_data["variants"] = variants
+            return removed
+        if not variants:
+            self.cache.pop(table_name, None)
+            return True
+        replacement_hash, replacement = list(variants.items())[-1]
+        replacement_result = (
+            replacement.get("result")
+            if isinstance(replacement, dict)
+            else None
+        )
+        if not isinstance(replacement_result, dict):
+            self.cache.pop(table_name, None)
+            return True
+        self.cache[table_name] = {
+            "hash": replacement_hash,
+            "result": replacement_result,
+            "content_sha256": str(replacement.get("content_sha256") or ""),
+            "variants": variants,
+        }
+        return True
 
     @staticmethod
     def _cached_result_for_hash(
@@ -1912,15 +2251,25 @@ class TableInspector:
             return None
         if cached_data.get("hash") == current_hash:
             result = cached_data.get("result")
-            return result if isinstance(result, dict) else None
-        variants = cached_data.get("variants")
-        if not isinstance(variants, dict):
+            digest = cached_data.get("content_sha256")
+        else:
+            variants = cached_data.get("variants")
+            if not isinstance(variants, dict):
+                return None
+            variant = variants.get(current_hash)
+            if not isinstance(variant, dict):
+                return None
+            result = variant.get("result")
+            digest = variant.get("content_sha256")
+        if not isinstance(result, dict) or not isinstance(digest, str):
             return None
-        variant = variants.get(current_hash)
-        if not isinstance(variant, dict):
+        try:
+            actual_digest = cache_result_digest(result)
+        except (TypeError, ValueError):
             return None
-        result = variant.get("result")
-        return result if isinstance(result, dict) else None
+        if digest != actual_digest:
+            return None
+        return result
 
     def _store_cached_result(
         self,
@@ -1929,6 +2278,7 @@ class TableInspector:
         result: TableInspectResult,
     ) -> None:
         result_data = result_to_cache_dict(result)
+        result_digest = cache_result_digest(result_data)
         cached_data = self.cache.get(table_name)
         variants: dict[str, dict[str, Any]] = {}
         if isinstance(cached_data, dict):
@@ -1943,19 +2293,35 @@ class TableInspector:
                 )
             previous_hash = str(cached_data.get("hash") or "")
             previous_result = cached_data.get("result")
-            if previous_hash and isinstance(previous_result, dict):
+            previous_digest = cached_data.get("content_sha256")
+            try:
+                previous_digest_matches = (
+                    isinstance(previous_result, dict)
+                    and isinstance(previous_digest, str)
+                    and previous_digest == cache_result_digest(previous_result)
+                )
+            except (TypeError, ValueError):
+                previous_digest_matches = False
+            if previous_hash and previous_digest_matches:
                 variants.setdefault(
                     previous_hash,
-                    {"result": previous_result},
+                    {
+                        "result": previous_result,
+                        "content_sha256": previous_digest,
+                    },
                 )
 
         variants.pop(current_hash, None)
-        variants[current_hash] = {"result": result_data}
+        variants[current_hash] = {
+            "result": result_data,
+            "content_sha256": result_digest,
+        }
         while len(variants) > MAX_CACHE_VARIANTS_PER_TABLE:
             variants.pop(next(iter(variants)))
         self.cache[table_name] = {
             "hash": current_hash,
             "result": result_data,
+            "content_sha256": result_digest,
             "variants": variants,
         }
 
@@ -1973,14 +2339,19 @@ class TableInspector:
         content = (
             f"{PROMPT_VERSION}|publication_contract="
             f"{self.validate_publication_contract}|"
+            f"catalog_snapshot={self.catalog_snapshot_hash}|"
+            f"asset_manifest={self.asset_manifest_hash}|"
             f"{self.model}|{self.base_url}|temperature=0|"
             f"{ctx.table_name}|{prompt_layer}|{ctx.ddl}|"
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
             f"{upstream_layers}|{downstream_layers}|"
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
+            f"{ctx.upstream_metric_group_status}|"
             f"{ctx.downstream_entity_publication_features}|"
             f"{ctx.column_lineage}|{ctx.declared_data_domain}|"
-            f"{ctx.declared_business_area}|{ctx.business_domain_options}|"
+            f"{ctx.declared_business_area}|"
+            f"{ctx.declared_business_semantics_status}|"
+            f"{ctx.business_domain_options}|"
             f"{ctx.business_semantics_options}|{ctx.project_context}"
         )
         return hashlib.sha256(content.encode(TEXT_ENCODING)).hexdigest()
@@ -1994,11 +2365,15 @@ class TableInspector:
         for ctx, result in pairs:
             current_hash = self._compute_hash(ctx)
             result.context_hash = current_hash
-            if (
-                result.resume_eligible
-                and result.status != "blocked"
-                and result.confidence >= self.min_cacheable_confidence
-            ):
+            result.catalog_snapshot_hash = self.catalog_snapshot_hash
+            result.asset_manifest_hash = self.asset_manifest_hash
+            synchronize_result_issues(result)
+            reuse = inspection_reuse_decision(
+                result,
+                min_confidence=self.min_cacheable_confidence,
+            )
+            result.resume_eligible = reuse.eligible
+            if reuse.eligible:
                 with self._cache_lock:
                     self._store_cached_result(
                         ctx.table_name,
@@ -2006,6 +2381,15 @@ class TableInspector:
                         result,
                     )
                 cache_changed = True
+            else:
+                with self._cache_lock:
+                    cache_changed = (
+                        self._remove_cached_variant(
+                            ctx.table_name,
+                            current_hash,
+                        )
+                        or cache_changed
+                    )
             if self.result_callback:
                 self.result_callback(result)
         if cache_changed:
@@ -2019,25 +2403,107 @@ class TableInspector:
         *,
         source: str,
     ) -> TableInspectResult | None:
+        if not cache:
+            return None
+        self._reuse_stats.record_lookup(source)
         cached_result = self._cached_result_for_hash(
             cache.get(ctx.table_name),
             current_hash,
         )
         if cached_result is None:
+            self._reuse_stats.record_miss(source, "variant_missing_or_invalid")
             return None
-        restored_result = dict_to_result(
-            cached_result,
-            table_name=ctx.table_name,
-            declared_layer=ctx.layer,
-        )
-        if (
-            restored_result.status == "blocked"
-            or restored_result.confidence < self.min_cacheable_confidence
+        try:
+            cache_policy = InspectionCachePolicy.from_dict(
+                cached_result.get("cache_policy")
+            )
+            if not cache_policy.matches_inputs(
+                context_hash=current_hash,
+                catalog_snapshot_hash=self.catalog_snapshot_hash,
+                asset_manifest_hash=self.asset_manifest_hash,
+            ):
+                self._reuse_stats.record_miss(
+                    source, "input_fingerprint_changed"
+                )
+                return None
+            cached_view = dict_to_result(
+                cached_result,
+                table_name=ctx.table_name,
+                declared_layer=ctx.layer,
+            )
+            if (
+                cached_view.table_name != ctx.table_name
+                or cached_view.context_hash != current_hash
+                or cached_view.catalog_snapshot_hash
+                != self.catalog_snapshot_hash
+                or cached_view.asset_manifest_hash != self.asset_manifest_hash
+                or cached_view.parsed_candidate is None
+                or cached_view.parsed_candidate.table_name != ctx.table_name
+            ):
+                self._reuse_stats.record_miss(
+                    source, "payload_identity_mismatch"
+                )
+                return None
+            if cached_view.raw_response is not None and (
+                cached_view.raw_response.table_name != ctx.table_name
+                or cached_view.parsed_candidate.raw_response_hash
+                != cached_view.raw_response.content_hash
+            ):
+                self._reuse_stats.record_miss(source, "raw_payload_mismatch")
+                return None
+            replayed_response = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                cached_view.parsed_candidate.payload,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                        }
+                    }
+                ]
+            }
+            restored_result = parse_response(
+                ctx.table_name,
+                replayed_response,
+                ctx.layer,
+                raw_response=cached_view.raw_response,
+            )
+            restored_result.raw_response = cached_view.raw_response
+            restored_result.parsed_candidate = cached_view.parsed_candidate
+            restored_result.retry_count = cached_view.retry_count
+            restored_result.first_attempt_inferred_layer = (
+                cached_view.first_attempt_inferred_layer
+            )
+            validate_inspection_result(
+                restored_result,
+                ctx,
+                validate_publication_contract=(
+                    self.validate_publication_contract
+                ),
+            )
+        except (
+            InvalidInspectionCacheError,
+            UnknownInspectionIssueError,
+            TypeError,
+            ValueError,
         ):
+            self._reuse_stats.record_miss(source, "payload_or_policy_invalid")
+            return None
+        reuse = inspection_reuse_decision(
+            restored_result,
+            min_confidence=self.min_cacheable_confidence,
+        )
+        if not reuse.eligible:
+            self._reuse_stats.record_miss(source, reuse.reason)
             return None
         restored_result.context_hash = current_hash
+        restored_result.catalog_snapshot_hash = self.catalog_snapshot_hash
+        restored_result.asset_manifest_hash = self.asset_manifest_hash
         restored_result.reuse_source = source
-        restored_result.resume_eligible = True
+        restored_result.resume_eligible = reuse.eligible
+        self._reuse_stats.record_hit(source, reuse, cache_policy)
         return restored_result
 
     def _emit_progress(
@@ -2075,19 +2541,67 @@ class TableInspector:
             "temperature": 0.0,
         }
 
-        req = urllib.request.Request(
-            self.base_url,
-            data=json.dumps(data).encode(TEXT_ENCODING),
-            headers=headers,
-            method="POST",
-        )
         try:
+            endpoint = urlparse(self.base_url)
+            endpoint_host = endpoint.hostname
+        except ValueError as error:
+            raise InspectionConfigurationError(
+                "DeepSeek endpoint configuration is invalid"
+            ) from error
+        if endpoint.scheme not in {"http", "https"} or not endpoint_host:
+            raise InspectionConfigurationError(
+                "DeepSeek endpoint configuration is invalid"
+            )
+        try:
+            req = urllib.request.Request(
+                self.base_url,
+                data=json.dumps(data).encode(TEXT_ENCODING),
+                headers=headers,
+                method="POST",
+            )
             with urllib.request.urlopen(
                 req, timeout=self.request_timeout
             ) as response:
-                return response.read().decode(TEXT_ENCODING)
-        except Exception as e:
-            raise RuntimeError(f"DeepSeek API 调用失败: {e}") from e
+                response_body = response.read()
+        except HTTPError as error:
+            status_code = int(error.code)
+            evidence = (
+                IssueEvidence(
+                    kind="http_status",
+                    values=(str(status_code),),
+                ),
+            )
+            if status_code in AUTHENTICATION_HTTP_STATUS_CODES:
+                raise InspectionAuthenticationError(
+                    "DeepSeek API authentication was rejected",
+                    evidence=evidence,
+                ) from error
+            if (
+                400 <= status_code < 500
+                and status_code not in RETRYABLE_HTTP_STATUS_CODES
+            ):
+                raise InspectionRequestRejectedError(
+                    "DeepSeek API request configuration was rejected",
+                    evidence=evidence,
+                ) from error
+            raise InspectionTransportError(
+                "DeepSeek API transport failed",
+                evidence=evidence,
+            ) from error
+        except ValueError as error:
+            raise InspectionConfigurationError(
+                "DeepSeek endpoint configuration is invalid"
+            ) from error
+        except (HTTPException, OSError, TimeoutError) as error:
+            raise InspectionTransportError(
+                "DeepSeek API transport failed"
+            ) from error
+        try:
+            return response_body.decode(TEXT_ENCODING)
+        except UnicodeError as error:
+            raise InspectionContentParseError(
+                f"DeepSeek API 响应不是有效 {TEXT_ENCODING}: {error}"
+            ) from error
 
     def inspect(
         self,
@@ -2141,7 +2655,6 @@ class TableInspector:
         prompt = build_prompt(ctx)
         result = None
         last_usable_result = None
-        used_retry_fallback = False
         first_attempt_inferred_layer = ""
         for attempt in range(self.max_retries + 1):
             self._emit_progress(
@@ -2152,16 +2665,17 @@ class TableInspector:
                 max_attempts=self.max_retries + 1,
             )
             try:
+                self._reuse_stats.record_api_call()
                 resp_str = self._call_api(prompt)
-                resp_json = json.loads(resp_str)
-            except Exception as e:
+            except InspectionBoundaryError as error:
                 result = TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
                     inferred_layer="OTHER",
                     table_type="other",
                     confidence=0.0,
-                    reasoning_steps=[f"分类异常: {str(e)}"],
+                    reasoning_steps=[f"分类异常: {str(error)}"],
+                    issues=(error.to_issue(ctx.table_name),),
                     retry_count=attempt,
                 )
                 if attempt == 0:
@@ -2175,31 +2689,93 @@ class TableInspector:
                     progress_context=progress_context,
                     attempt=attempt + 1,
                     max_attempts=self.max_retries + 1,
-                    error=str(e),
+                    error=str(error),
                 )
-                if attempt >= self.max_retries:
+                if not error.retryable or attempt >= self.max_retries:
                     if last_usable_result is not None:
+                        failure_issues = result.issues
                         result = last_usable_result
-                        used_retry_fallback = True
                         result.retry_count = attempt
                         result.reasoning_steps.append(
-                            f"重试异常，保留上次可用结果: {str(e)}"
+                            f"重试异常，保留上次可用结果: {str(error)}"
+                        )
+                        result.issues = sort_issues(
+                            tuple(result.issues) + tuple(failure_issues)
                         )
                     break
                 continue
+            except Exception as error:
+                internal_error = InspectionInternalError(
+                    f"inspection request boundary failed: {error}",
+                    table_name=ctx.table_name,
+                    stage="parse",
+                    cause=error,
+                )
+                raise internal_error from error
 
-            result = parse_response(ctx.table_name, resp_json, ctx.layer)
+            raw_response = RawInspectionResponse.create(
+                table_name=ctx.table_name,
+                model=self.model,
+                endpoint=self.base_url,
+                context_hash=current_hash,
+                body=resp_str,
+            )
+            try:
+                resp_json = json.loads(resp_str)
+                if not isinstance(resp_json, dict):
+                    raise InspectionContentParseError(
+                        "API response envelope must be a JSON object"
+                    )
+                result = parse_response(
+                    ctx.table_name,
+                    resp_json,
+                    ctx.layer,
+                    raw_response=raw_response,
+                )
+            except json.JSONDecodeError as error:
+                parse_error = InspectionContentParseError(str(error))
+                parse_error.__cause__ = error
+                result = _parse_failure_result(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    raw_response=raw_response,
+                    error=parse_error,
+                )
+            except InspectionContentParseError as error:
+                result = _parse_failure_result(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    raw_response=raw_response,
+                    error=error,
+                )
+            except Exception as error:
+                internal_error = InspectionInternalError(
+                    f"inspection parser failed: {error}",
+                    table_name=ctx.table_name,
+                    stage="parse",
+                    cause=error,
+                )
+                raise internal_error from error
             result.retry_count = attempt
             if attempt == 0:
                 first_attempt_inferred_layer = result.inferred_layer
             result.first_attempt_inferred_layer = first_attempt_inferred_layer
-            validate_inspection_result(
-                result,
-                ctx,
-                validate_publication_contract=(
-                    self.validate_publication_contract
-                ),
-            )
+            try:
+                validate_inspection_result(
+                    result,
+                    ctx,
+                    validate_publication_contract=(
+                        self.validate_publication_contract
+                    ),
+                )
+            except Exception as error:
+                internal_error = InspectionInternalError(
+                    f"inspection validation failed: {error}",
+                    table_name=ctx.table_name,
+                    stage="local_validation",
+                    cause=error,
+                )
+                raise internal_error from error
             if result.confidence > 0:
                 last_usable_result = result
             elif (
@@ -2209,11 +2785,14 @@ class TableInspector:
                     iter(result.reasoning_steps),
                     "返回结果不可用",
                 )
+                failure_issues = result.issues
                 result = last_usable_result
-                used_retry_fallback = True
                 result.retry_count = attempt
                 result.reasoning_steps.append(
                     f"重试异常，保留上次可用结果: {failure}"
+                )
+                result.issues = sort_issues(
+                    tuple(result.issues) + tuple(failure_issues)
                 )
                 break
             if (
@@ -2238,13 +2817,15 @@ class TableInspector:
             )
 
         result.context_hash = current_hash
+        result.catalog_snapshot_hash = self.catalog_snapshot_hash
+        result.asset_manifest_hash = self.asset_manifest_hash
         result.reuse_source = ""
-        result.resume_eligible = not used_retry_fallback
-        if (
-            not used_retry_fallback
-            and result.status != "blocked"
-            and result.confidence >= self.min_cacheable_confidence
-        ):
+        reuse = inspection_reuse_decision(
+            result,
+            min_confidence=self.min_cacheable_confidence,
+        )
+        result.resume_eligible = reuse.eligible
+        if reuse.eligible:
             with self._cache_lock:
                 self._store_cached_result(ctx.table_name, current_hash, result)
                 self._save_cache()
@@ -2267,21 +2848,31 @@ class TableInspector:
             )
             try:
                 result = self.inspect(ctx, progress_context=progress_context)
-            except Exception as e:
-                result = TableInspectResult(
-                    table_name=ctx.table_name,
-                    declared_layer=ctx.layer,
-                    inferred_layer="OTHER",
-                    table_type="other",
-                    confidence=0.0,
-                    reasoning_steps=[f"分类异常: {str(e)}"],
-                )
+            except InspectionInternalError as error:
                 self._emit_progress(
                     "unexpected_error",
                     ctx,
                     progress_context=progress_context,
-                    error=str(e),
+                    error=str(error),
                 )
+                batch_failed.set()
+                raise
+            except Exception as error:
+                self._emit_progress(
+                    "unexpected_error",
+                    ctx,
+                    progress_context=progress_context,
+                    error=str(error),
+                )
+                batch_failed.set()
+                internal_error = InspectionInternalError(
+                    f"inspection worker failed: {error}",
+                    table_name=ctx.table_name,
+                    stage="local_validation",
+                    cause=error,
+                    context="worker",
+                )
+                raise internal_error from error
             if self.result_callback and not batch_failed.is_set():
                 try:
                     self.result_callback(result)

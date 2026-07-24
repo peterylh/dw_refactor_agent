@@ -3,14 +3,21 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Iterable
 
 import sqlglot
 import yaml
 from sqlglot import exp
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    read_consistent_metadata_snapshot,
+)
 from dw_refactor_agent.assessment.project_facts.business_semantics import (
     load_business_semantics_catalog,
+)
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
 )
 from dw_refactor_agent.config import (
     TEXT_ENCODING,
@@ -18,6 +25,9 @@ from dw_refactor_agent.config import (
     iter_project_asset_files,
     load_model_metadata,
     task_path_for_job,
+)
+from dw_refactor_agent.config.semantics import (
+    business_domain_config_from_semantics_catalog,
 )
 from dw_refactor_agent.lineage.view import LineageView
 
@@ -50,6 +60,25 @@ VERSION_CONTROL_COLUMN_NAMES = frozenset(
         "valid_to",
     }
 )
+
+
+class InspectionContextSetError(ValueError):
+    """Raised before inspection when the manifest target set is unsafe."""
+
+    code = "inspection_context_set_mismatch"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        expected: Iterable[str] = (),
+        actual: Iterable[str] = (),
+        table: str = "",
+    ):
+        super().__init__(message)
+        self.expected = tuple(expected)
+        self.actual = tuple(actual)
+        self.table = table
 
 
 def _short_table_name(table_name: str) -> str:
@@ -109,6 +138,17 @@ class _CanonicalTableLookup:
         if short_name not in self.ambiguous_short_names:
             return False
         return identity == short_name or identity not in self.by_identity
+
+    def get_with_unique_short_fallback(self, table_name: str, default=None):
+        """Resolve a qualified target through a unique short graph key."""
+        identity = _canonical_table_name(table_name)
+        if identity in self.by_identity:
+            return self.by_identity[identity]
+        short_name = _short_table_name(identity).casefold()
+        fallback_identity = self.unique_identity_by_short.get(short_name)
+        if fallback_identity is None:
+            return default
+        return self.by_identity[fallback_identity]
 
 
 def _canonical_table_lookup(
@@ -181,12 +221,18 @@ class TableContext:
     upstream_metric_groups: dict[str, dict[str, list[str]]] = field(
         default_factory=dict
     )
+    upstream_metric_group_status: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
     downstream_entity_publication_features: dict[str, dict] = field(
         default_factory=dict
     )
     column_lineage: list[dict] = field(default_factory=list)
     declared_data_domain: str = ""
     declared_business_area: str = ""
+    declared_business_semantics_status: dict[str, Any] = field(
+        default_factory=dict
+    )
     project_context: str = ""
     business_domain_options: dict = field(default_factory=dict)
     business_semantics_options: dict = field(default_factory=dict)
@@ -196,6 +242,12 @@ class TableContext:
 class _ModelMetadataEntry:
     table_name: str
     metadata: dict
+
+
+@dataclass(frozen=True)
+class _MetricGroupEvidence:
+    groups: dict[str, dict[str, list[str]]]
+    statuses: dict[str, dict[str, Any]]
 
 
 def _metric_names(value) -> list[str]:
@@ -228,20 +280,27 @@ def _metric_name(item) -> str:
 
 def _load_model_metric_groups(
     project: str,
-) -> dict[str, dict[str, list[str]]]:
+    model_metadata: dict[str, dict] | None = None,
+) -> _MetricGroupEvidence:
     metric_groups = {}
+    statuses = {}
 
-    for model_path in iter_project_asset_files(project, "models", "*.yaml"):
-        try:
-            data = (
-                yaml.safe_load(model_path.read_text(encoding=TEXT_ENCODING))
-                or {}
-            )
-        except Exception:
+    models = (
+        model_metadata
+        if model_metadata is not None
+        else load_model_metadata(project)
+    )
+    for table_name, metadata in models.items():
+        view = AssessmentModelSemantics.from_metadata(metadata)
+        section = view.section("metrics")
+        status = view.status("metrics")
+        status_payload = {"status": status}
+        if status == "quarantined":
+            status_payload["reasons"] = list(section.reasons)
+        statuses[table_name] = status_payload
+        data = view.active_payload("metrics")
+        if data is None:
             continue
-        if not isinstance(data, dict):
-            continue
-        table_name = str(data.get("name") or model_path.stem)
         groups = {
             "atomic_metrics": _metric_names(data.get("atomic_metrics")),
             "derived_metrics": _metric_names(data.get("derived_metrics")),
@@ -251,7 +310,7 @@ def _load_model_metric_groups(
         }
         if any(groups.values()):
             metric_groups[table_name] = groups
-    return metric_groups
+    return _MetricGroupEvidence(metric_groups, statuses)
 
 
 def _catalog_option_entries(raw_entries) -> list[dict]:
@@ -278,8 +337,15 @@ def _catalog_option_entries(raw_entries) -> list[dict]:
     return entries
 
 
-def _business_semantics_prompt_options(project: str) -> dict:
-    catalog = load_business_semantics_catalog(project)
+def _business_semantics_prompt_options(
+    project: str,
+    catalog: dict | None = None,
+) -> dict:
+    catalog = (
+        catalog
+        if catalog is not None
+        else load_business_semantics_catalog(project)
+    )
     if not catalog:
         return {}
     options = {}
@@ -294,8 +360,15 @@ def _business_semantics_prompt_options(project: str) -> dict:
     return options
 
 
-def _project_context(project: str) -> str:
-    catalog = load_business_semantics_catalog(project)
+def _project_context(
+    project: str,
+    catalog: dict | None = None,
+) -> str:
+    catalog = (
+        catalog
+        if catalog is not None
+        else load_business_semantics_catalog(project)
+    )
     if not catalog:
         return ""
     return str(catalog.get("project_context") or "").strip()
@@ -342,7 +415,21 @@ def _layer_for_context_table(
 ) -> str:
     entry = model_metadata.get(table_name)
     metadata = entry.metadata if entry else {}
-    return str(metadata.get("layer") or "OTHER").upper()
+    if not metadata:
+        return "OTHER"
+    return AssessmentModelSemantics.from_metadata(metadata).layer or (
+        "QUARANTINED"
+    )
+
+
+def _metric_section_status(metadata: dict) -> dict[str, Any]:
+    view = AssessmentModelSemantics.from_metadata(metadata)
+    section = view.section("metrics")
+    status = view.status("metrics")
+    result = {"status": status}
+    if status == "quarantined":
+        result["reasons"] = list(section.reasons)
+    return result
 
 
 def _canonical_dependency_index(dependencies: dict) -> dict[str, set[str]]:
@@ -398,7 +485,10 @@ def _metadata_asset_roles(
     for table_name, metadata in model_metadata.items():
         if not isinstance(metadata, dict):
             continue
-        layer = str(metadata.get("layer") or "").upper()
+        layer = (
+            AssessmentModelSemantics.from_metadata(metadata).operational_layer
+            or ""
+        )
         if layer == "ODS":
             role = "ods"
         elif layer == "ADS":
@@ -559,10 +649,65 @@ def build_contexts(
     metric_groups: dict[str, dict[str, list[str]]] | None = None,
     expose_layer_hints: bool = True,
     use_model_metadata_asset_roles: bool = False,
+    asset_content: dict[str, dict[str, str]] | None = None,
+    business_semantics_catalog: dict | None = None,
+    inspection_targets: Iterable[str] | None = None,
 ) -> list[TableContext]:
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     use_project_asset_dirs = ddl_dir is None
     use_project_task_dirs = tasks_dir is None
+    explicit_model_metadata = model_metadata is not None
+
+    def load_context_metadata():
+        config.clear_model_metadata_cache()
+        config.clear_business_semantics_cache()
+        loaded_models = (
+            model_metadata
+            if model_metadata is not None
+            else load_model_metadata(project)
+        )
+        loaded_catalog = (
+            business_semantics_catalog
+            if business_semantics_catalog is not None
+            else load_business_semantics_catalog(project)
+        )
+        if metric_groups is None:
+            metric_evidence = _load_model_metric_groups(
+                project,
+                loaded_models,
+            )
+            loaded_metric_groups = metric_evidence.groups
+            loaded_metric_statuses = metric_evidence.statuses
+        else:
+            loaded_metric_groups = metric_groups
+            loaded_metric_statuses = {}
+        if not use_project_asset_dirs:
+            loaded_model_asset_roles = {}
+        elif explicit_model_metadata and use_model_metadata_asset_roles:
+            loaded_model_asset_roles = _metadata_asset_roles(loaded_models)
+        else:
+            loaded_model_asset_roles = _project_model_asset_roles(project)
+        return (
+            loaded_models,
+            loaded_catalog,
+            loaded_metric_groups,
+            loaded_metric_statuses,
+            loaded_model_asset_roles,
+        )
+
+    if project in config.PROJECT_CONFIG:
+        loaded_context_metadata, _formal_snapshot = (
+            read_consistent_metadata_snapshot(project, load_context_metadata)
+        )
+    else:
+        loaded_context_metadata = load_context_metadata()
+    (
+        model_metadata,
+        business_semantics_catalog,
+        metric_groups,
+        loaded_metric_statuses,
+        model_asset_roles,
+    ) = loaded_context_metadata
 
     lineage_view = LineageView.from_data(project, lineage_data)
     upstream, downstream = lineage_view.asset_table_graph()
@@ -575,6 +720,41 @@ def build_contexts(
         for table in lineage_data.get("tables", [])
         if table.get("name")
     )
+    lineage_table_names = set(dependency_table_names)
+    lineage_identity_lookup = _canonical_table_lookup(
+        {table_name: table_name for table_name in lineage_table_names},
+        ambiguous_short_names=_ambiguous_short_table_names(
+            lineage_table_names
+        ),
+    )
+    explicit_target_identities = (
+        tuple(
+            sorted(
+                {
+                    _canonical_table_name(table_name)
+                    for table_name in inspection_targets
+                    if _canonical_table_name(table_name)
+                }
+            )
+        )
+        if inspection_targets is not None
+        else None
+    )
+    if explicit_target_identities is not None:
+        for target_identity in explicit_target_identities:
+            canonical_target = _canonical_table_name(target_identity)
+            short_name = _short_table_name(canonical_target).casefold()
+            if (
+                canonical_target not in lineage_identity_lookup.by_identity
+                and short_name in lineage_identity_lookup.ambiguous_short_names
+            ):
+                raise InspectionContextSetError(
+                    "inspection target has ambiguous qualified lineage "
+                    f"candidates: {target_identity}",
+                    expected=explicit_target_identities,
+                    table=target_identity,
+                )
+        dependency_table_names.update(explicit_target_identities)
     ambiguous_short_names = _ambiguous_short_table_names(
         dependency_table_names
     )
@@ -588,17 +768,6 @@ def build_contexts(
     )
     has_lineage_edges = any(upstream.values()) or any(downstream.values())
     target_layers = set(layers or ("DWD", "DWS", "DIM"))
-    metric_groups = (
-        metric_groups
-        if metric_groups is not None
-        else _load_model_metric_groups(project)
-    )
-    explicit_model_metadata = model_metadata is not None
-    model_metadata = (
-        model_metadata
-        if explicit_model_metadata
-        else load_model_metadata(project)
-    )
     canonical_model_metadata = _canonical_table_lookup(
         _with_unique_qualified_aliases(
             _canonical_model_metadata_index(model_metadata),
@@ -613,23 +782,44 @@ def build_contexts(
         ),
         ambiguous_short_names=ambiguous_short_names,
     )
-    business_domain_config = get_business_domain_config(project)
+    canonical_metric_statuses = _canonical_table_lookup(
+        _with_unique_qualified_aliases(
+            loaded_metric_statuses,
+            dependency_table_names,
+        ),
+        ambiguous_short_names=ambiguous_short_names,
+    )
+    business_domain_config = (
+        business_domain_config_from_semantics_catalog(
+            business_semantics_catalog
+        )
+        if business_semantics_catalog is not None
+        else get_business_domain_config(project)
+    )
     business_domain_options = (
         business_domain_config.prompt_options()
         if business_domain_config
         else {}
     )
-    business_semantics_options = _business_semantics_prompt_options(project)
-    project_context = _project_context(project)
-    if not use_project_asset_dirs:
-        model_asset_roles = {}
-    elif explicit_model_metadata and use_model_metadata_asset_roles:
-        # Generate passes an in-memory cold-start candidate.  Its inspection
-        # boundary must not depend on stale YAML files still present on disk.
-        model_asset_roles = _metadata_asset_roles(model_metadata)
-    else:
-        model_asset_roles = _project_model_asset_roles(project)
+    business_semantics_options = _business_semantics_prompt_options(
+        project,
+        business_semantics_catalog,
+    )
+    project_context = _project_context(project, business_semantics_catalog)
     contexts = []
+    canonical_asset_content = {
+        _canonical_table_name(table_name): dict(content)
+        for table_name, content in (asset_content or {}).items()
+    }
+
+    def get_asset_content(table_name: str) -> dict[str, str] | None:
+        identity = _canonical_table_name(table_name)
+        content = canonical_asset_content.get(identity)
+        if content is not None:
+            return content
+        return canonical_asset_content.get(
+            _short_table_name(identity).casefold()
+        )
 
     memo = {}
     downstream_publication_feature_cache: dict[str, dict] = {}
@@ -653,22 +843,40 @@ def build_contexts(
             if model_entry
             else _short_table_name(table_name)
         )
-        task_path = (
-            _project_task_path(project, model_table_name)
-            if use_project_task_dirs
-            else _first_directory_file(
-                tasks_dir,
-                f"{model_table_name}.sql",
+        snapshot_content = get_asset_content(model_table_name)
+        if snapshot_content is not None:
+            sql_text = str(snapshot_content.get("etl_sql") or "")
+        else:
+            task_path = (
+                _project_task_path(project, model_table_name)
+                if use_project_task_dirs
+                else _first_directory_file(
+                    tasks_dir,
+                    f"{model_table_name}.sql",
+                )
             )
-        )
-        sql_text = (
-            task_path.read_text(encoding=TEXT_ENCODING)
-            if task_path and task_path.exists()
-            else ""
-        )
+            sql_text = (
+                task_path.read_text(encoding=TEXT_ENCODING)
+                if task_path and task_path.exists()
+                else ""
+            )
         features = _downstream_entity_publication_features(sql_text)
         downstream_publication_feature_cache[canonical_name] = features
         return features
+
+    def dependency_values(
+        lookup: _CanonicalTableLookup,
+        table_name: str,
+    ):
+        if explicit_target_identities is not None:
+            return lookup.get_with_unique_short_fallback(table_name, set())
+        return lookup.get(table_name, set())
+
+    def lineage_identity(table_name: str) -> str:
+        return lineage_identity_lookup.get_with_unique_short_fallback(
+            table_name,
+            table_name,
+        )
 
     def get_depth_from_ods(table_name: str, visiting: set = None) -> int:
         canonical_name = _canonical_table_name(table_name)
@@ -680,7 +888,7 @@ def build_contexts(
             return 0
         visiting.add(canonical_name)
 
-        parents = canonical_upstream.get(table_name, set())
+        parents = dependency_values(canonical_upstream, table_name)
         if not parents:
             short_name = _short_table_name(canonical_name).casefold()
             result = 0 if short_name.startswith("ods_") else 1
@@ -691,8 +899,16 @@ def build_contexts(
         memo[canonical_name] = result
         return result
 
-    for table in lineage_data.get("tables", []):
-        name = table["name"]
+    target_table_names = (
+        explicit_target_identities
+        if explicit_target_identities is not None
+        else tuple(
+            table["name"]
+            for table in lineage_data.get("tables", [])
+            if table.get("name")
+        )
+    )
+    for name in target_table_names:
         short_name = _short_table_name(name)
         model_entry = canonical_model_metadata.get(name)
         if canonical_model_metadata.has_ambiguous_fallback(name):
@@ -705,7 +921,18 @@ def build_contexts(
         model_table_name = (
             model_entry.table_name if model_entry else short_name
         )
-        layer = str(metadata.get("layer") or "OTHER").upper()
+        model_view = (
+            AssessmentModelSemantics.from_metadata(metadata)
+            if metadata
+            else None
+        )
+        layer = model_view.layer if model_view is not None else "OTHER"
+        if not layer:
+            LOGGER.warning(
+                "Skipping %s because model classification is quarantined",
+                model_table_name,
+            )
+            continue
         fixed_boundary_roles = (
             _model_asset_roles_for_table(
                 model_table_name,
@@ -727,38 +954,46 @@ def build_contexts(
             continue
 
         # Read DDL
-        ddl_path = (
-            _first_project_asset_file(
-                project,
-                "ddl",
-                f"{model_table_name}.sql",
+        snapshot_content = get_asset_content(model_table_name)
+        if snapshot_content is not None:
+            ddl_content = str(snapshot_content.get("ddl") or "")
+            etl_content = str(snapshot_content.get("etl_sql") or "")
+        else:
+            ddl_path = (
+                _first_project_asset_file(
+                    project,
+                    "ddl",
+                    f"{model_table_name}.sql",
+                )
+                if use_project_asset_dirs
+                else _first_directory_file(ddl_dir, f"{model_table_name}.sql")
             )
-            if use_project_asset_dirs
-            else _first_directory_file(ddl_dir, f"{model_table_name}.sql")
-        )
-        ddl_content = (
-            ddl_path.read_text(encoding=TEXT_ENCODING)
-            if ddl_path and ddl_path.exists()
-            else ""
-        )
+            ddl_content = (
+                ddl_path.read_text(encoding=TEXT_ENCODING)
+                if ddl_path and ddl_path.exists()
+                else ""
+            )
 
-        # Read ETL
-        task_path = (
-            _project_task_path(project, model_table_name)
-            if use_project_task_dirs
-            else _first_directory_file(
-                tasks_dir,
-                f"{model_table_name}.sql",
+            # Read ETL
+            task_path = (
+                _project_task_path(project, model_table_name)
+                if use_project_task_dirs
+                else _first_directory_file(
+                    tasks_dir,
+                    f"{model_table_name}.sql",
+                )
             )
+            etl_content = (
+                task_path.read_text(encoding=TEXT_ENCODING)
+                if task_path and task_path.exists()
+                else ""
+            )
+        upstream_tables = sorted(dependency_values(canonical_upstream, name))
+        downstream_tables = sorted(
+            dependency_values(canonical_downstream, name)
         )
-        etl_content = (
-            task_path.read_text(encoding=TEXT_ENCODING)
-            if task_path and task_path.exists()
-            else ""
-        )
-        upstream_tables = sorted(canonical_upstream.get(name, set()))
-        downstream_tables = sorted(canonical_downstream.get(name, set()))
         upstream_metric_groups = {}
+        upstream_metric_group_status = {}
         for upstream_table in upstream_tables:
             groups = canonical_metric_groups.get(upstream_table)
             if groups is not None:
@@ -771,6 +1006,17 @@ def build_contexts(
                     "are required",
                     _short_table_name(upstream_table),
                 )
+            upstream_entry = canonical_model_metadata.get(upstream_table)
+            if upstream_entry is not None:
+                upstream_metric_group_status[upstream_table] = (
+                    _metric_section_status(upstream_entry.metadata)
+                )
+            else:
+                loaded_status = canonical_metric_statuses.get(upstream_table)
+                if loaded_status is not None:
+                    upstream_metric_group_status[upstream_table] = dict(
+                        loaded_status
+                    )
         downstream_entity_publication_features = {}
         for downstream_table in downstream_tables:
             features = get_downstream_publication_features(downstream_table)
@@ -778,6 +1024,23 @@ def build_contexts(
                 downstream_entity_publication_features[downstream_table] = (
                     features
                 )
+
+        business_semantics = (
+            model_view.active_payload("business_semantics")
+            if model_view is not None
+            else {}
+        )
+        business_semantics_status = (
+            {"status": model_view.status("business_semantics")}
+            if model_view is not None
+            else {"status": "missing_model"}
+        )
+        if (
+            model_view is not None
+            and business_semantics_status["status"] == "quarantined"
+        ):
+            section = model_view.section("business_semantics")
+            business_semantics_status["reasons"] = list(section.reasons)
 
         contexts.append(
             TableContext(
@@ -805,20 +1068,26 @@ def build_contexts(
                 expose_layer_hints=expose_layer_hints,
                 depth_from_ods=get_depth_from_ods(name),
                 upstream_metric_groups=upstream_metric_groups,
+                upstream_metric_group_status=upstream_metric_group_status,
                 downstream_entity_publication_features=(
                     downstream_entity_publication_features
                 ),
-                column_lineage=(lineage_view.column_lineage_for_table(name)),
+                column_lineage=(
+                    lineage_view.column_lineage_for_table(
+                        lineage_identity(name)
+                    )
+                ),
                 declared_data_domain=(
-                    str(metadata.get("data_domain") or "")
+                    str((business_semantics or {}).get("data_domain") or "")
                     if layer in DATA_DOMAIN_LAYERS
                     else ""
                 ),
                 declared_business_area=(
-                    str(metadata.get("business_area") or "")
+                    str((business_semantics or {}).get("business_area") or "")
                     if layer in BUSINESS_AREA_LAYERS
                     else ""
                 ),
+                declared_business_semantics_status=(business_semantics_status),
                 project_context=project_context,
                 business_domain_options=business_domain_options,
                 business_semantics_options=business_semantics_options,

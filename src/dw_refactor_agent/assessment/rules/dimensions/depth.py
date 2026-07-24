@@ -39,9 +39,25 @@ def score_lineage_depth(
     table_layers = context.table_layers
     upstream = context.upstream
 
-    # 不按表名推断缺失层级；models/lineage 中没有声明的表按 OTHER 处理。
-    ads = [t for t in tables if t["layer"] == "ADS"]
     table_names = scoped_names(scope, "tables")
+    eligible_names = [
+        table["name"]
+        for table in tables
+        if (context.operational_layer(table["name"]) or table.get("layer"))
+        == "ADS"
+        and (table_names is None or table["name"] in table_names)
+    ]
+    coverage = context.semantic_coverage(
+        eligible_names,
+        ("classification",),
+    )
+    assessed_names = set(coverage.assessed_names)
+    # 不按表名推断缺失层级；models/lineage 中没有声明的表按 OTHER 处理。
+    ads = [
+        table
+        for table in tables
+        if table.get("layer") == "ADS" and table["name"] in assessed_names
+    ]
     if table_names is not None:
         ads = [t for t in ads if t["name"] in table_names]
 
@@ -65,6 +81,11 @@ def score_lineage_depth(
     )
 
     avg_score = round(sum(scores) / len(scores), 1) if scores else 100.0
+    effective_score = (
+        round(sum(scores) / len(coverage.eligible_names), 1)
+        if coverage.eligible_names
+        else avg_score
+    )
     avg_depth = round(sum(depths) / len(depths), 2) if depths else 0.0
 
     return finalize_dimension(
@@ -76,4 +97,6 @@ def score_lineage_depth(
             "avg_middle_depth": avg_depth,
             "ideal_middle_depth": 2,
         },
+        coverage=coverage.as_dict(),
+        effective_score=effective_score,
     )

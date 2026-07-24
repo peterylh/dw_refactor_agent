@@ -1808,6 +1808,77 @@ def test_build_verification_plan_uses_full_table_compare_without_time_grain(
     config.clear_model_metadata_cache()
 
 
+def test_quarantined_model_keeps_operational_refactor_plan(
+    tmp_path,
+    monkeypatch,
+):
+    plan = _build_single_anchor_plan(
+        tmp_path,
+        monkeypatch,
+        "ads_dashboard",
+        """version: 3
+name: ads_dashboard
+operational_layer: ADS
+execution:
+  materialized: incremental
+  full_refresh_strategy: replay_slices
+  slice:
+    param: etl_date
+    column: stat_date
+    period: D
+governance:
+  status: quarantined
+  schema_version: 1
+  withheld_sections: [classification, business_semantics, entities, grain, metrics]
+  reasons:
+    classification: [structure_bundle_incomplete]
+    business_semantics: [business_process_missing]
+    entities: [structure_bundle_incomplete]
+    grain: [structure_bundle_incomplete]
+    metrics: [dependent_structure_unavailable]
+""",
+        task_sql="INSERT INTO demo_dm.{table_name} SELECT @etl_date;",
+    )
+
+    assert plan["jobs_to_run"][0]["layer"] == "ADS"
+    assert plan["jobs_to_run"][0]["execution_values"] == ["2024-06-15"]
+    assert plan["verification"]["data_anchor_status"] == "ready"
+
+    config.clear_model_metadata_cache()
+
+
+def test_verification_plan_blocks_task_bound_to_taskless_model(
+    tmp_path,
+    monkeypatch,
+):
+    plan = _build_single_anchor_plan(
+        tmp_path,
+        monkeypatch,
+        "ads_external",
+        """version: 2
+name: ads_external
+layer: ADS
+execution:
+  mode: taskless
+""",
+    )
+
+    assert plan["verification"]["data_anchor_status"] == "blocked"
+    assert plan["verification"]["checks"] == []
+    assert plan["verification"]["metadata_errors"] == [
+        {
+            "table": "ads_external",
+            "field": "execution.mode",
+            "message": (
+                "[ads_external] task SQL cannot bind to "
+                "execution.mode=taskless"
+            ),
+        }
+    ]
+
+    config.clear_model_metadata_cache()
+
+
 def test_build_verification_plan_allows_ddl_only_table_without_lineage(
     tmp_path, monkeypatch
 ):

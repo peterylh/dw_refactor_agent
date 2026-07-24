@@ -19,6 +19,9 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspectResult,
 )
 from dw_refactor_agent.lineage.view import LineageView
+from tests.assess.model_metadata_writer_test_support import (
+    _structured_inspection_result,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -416,7 +419,7 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
                         grain=grain or {},
                     )
                 )
-            return results
+            return list(map(_structured_inspection_result, results))
 
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
     monkeypatch.setattr(
@@ -448,11 +451,15 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     assert "combined_final_accuracy" not in report
     assert report["combined_llm_middle_accuracy"] == 1.0
     assert report["combined_post_retry_middle_accuracy"] == 1.0
-    assert report["total_catalog_change_count"] == 2
-    assert report["total_business_process_count"] == 1
-    assert report["total_semantic_subject_count"] == 1
+    assert report["total_catalog_change_count"] == 0
+    assert report["total_catalog_proposal_count"] == 2
+    assert report["total_business_process_count"] == 0
+    assert report["total_semantic_subject_count"] == 0
     assert report["published_project_count"] == 1
     assert report["blocked_project_count"] == 0
+    assert report["incomplete_project_count"] == 1
+    assert report["inspection_failure_project_count"] == 0
+    assert report["require_complete"] is False
     assert set(seen_contexts) == {
         ("customer_profile", "DWD", False),
         ("order_detail", "DWD", False),
@@ -483,21 +490,32 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     assert "final_accuracy" not in project
     assert project["llm_middle_accuracy"] == 1.0
     assert project["post_retry_middle_accuracy"] == 1.0
-    assert project["metric_count"] == 2
-    assert project["entity_table_count"] == 1
-    assert project["grain_table_count"] == 1
-    assert project["publication_status"] == "published"
+    assert project["metric_count"] == 0
+    assert project["entity_table_count"] == 0
+    assert project["grain_table_count"] == 0
+    assert project["candidate_resolution_status"] == "quarantined"
+    assert project["candidate_status"] == "quarantined"
+    assert project["complete"] is False
+    assert project["withheld_section_count"] > 0
+    assert project["quarantined_model_count"] == 3
+    assert project["publication_status"] == "published_with_quarantine"
     assert project["published"] is True
     assert project["publication_error_count"] == 0
     assert project["publication_errors"] == []
-    assert project["catalog_summary"]["business_process_overlap_count"] == 1
-    assert project["catalog_summary"]["semantic_subject_overlap_count"] == 1
+    assert project["catalog_summary"]["business_process_overlap_count"] == 0
+    assert project["catalog_summary"]["semantic_subject_overlap_count"] == 0
+    assert (
+        project["catalog_summary"]["proposed_business_process_overlap_count"]
+        == 1
+    )
+    assert (
+        project["catalog_summary"]["proposed_semantic_subject_overlap_count"]
+        == 1
+    )
     assert project["final_layer_counts"] == {
         "ADS": 1,
-        "DIM": 1,
-        "DWD": 1,
-        "DWS": 1,
         "ODS": 1,
+        "QUARANTINED": 3,
     }
     assert project["mismatches"] == []
     assert project["first_attempt_mismatches"] == []
@@ -588,14 +606,17 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
                 "grain": grain,
             }
         },
-        "planned_catalog_updates": [
+        "catalog_proposals": [
             {
-                "section": "business_processes",
-                "action": "add",
+                "kind": "business_process",
                 "code": "ORDER",
-                "entry": {"code": "ORDER"},
+                "display_name": "Order",
+                "source_tables": ["opaque_summary"],
+                "evidence": [],
+                "status": "proposed",
             }
         ],
+        "catalog_proposal_count": 1,
         "llm_result": {
             "tables": [
                 {
@@ -664,10 +685,13 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
     assert summary["metric_count"] == 1
     assert summary["catalog_summary"]["candidate"][
         "business_process_codes"
-    ] == ["EXISTING", "ORDER"]
+    ] == ["EXISTING"]
     assert summary["catalog_summary"]["published"][
         "business_process_codes"
     ] == ["EXISTING"]
+    assert summary["catalog_summary"]["proposals"][
+        "business_process_codes"
+    ] == ["ORDER"]
 
 
 def test_runner_script_help_works_without_pythonpath():

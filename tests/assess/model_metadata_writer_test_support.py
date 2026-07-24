@@ -2,6 +2,9 @@ import pytest
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.inspection_issues import (
+    ParsedInspectionCandidate,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
 from dw_refactor_agent.config import (
     BusinessAreaDef,
@@ -138,12 +141,15 @@ def _write_catalog_project(
     task_dir.mkdir(parents=True, exist_ok=True)
     for table_name in ddl_tables:
         (ddl_dir / f"{table_name}.sql").write_text(
-            (f"CREATE TABLE {table_name} (id BIGINT, customer_id BIGINT);\n"),
+            (
+                f"CREATE TABLE {table_name} "
+                "(id BIGINT, customer_id BIGINT, subtotal BIGINT);\n"
+            ),
             encoding="utf-8",
         )
         (task_dir / f"{table_name}.sql").write_text(
             f"TRUNCATE TABLE {table_name};\n"
-            f"INSERT INTO {table_name} SELECT 1, 1;\n",
+            f"INSERT INTO {table_name} SELECT 1, 1, 1;\n",
             encoding="utf-8",
         )
     if models:
@@ -456,3 +462,16 @@ def _run_isolated_writer_helper(tmp_path_factory, monkeypatch, helper):
             helper.__name__.replace("_assert_", "")
         )
         helper(tmp_path, isolated_monkeypatch)
+
+
+def _structured_inspection_result(
+    result: TableInspectResult,
+) -> TableInspectResult:
+    """Mark a hand-built inspector result as a lossless parsed candidate."""
+    if result.parsed_candidate is None:
+        result.parsed_candidate = ParsedInspectionCandidate.create(
+            table_name=result.table_name,
+            raw_response_hash=f"fixture-{result.table_name}",
+            payload={"table_name": result.table_name},
+        )
+    return result

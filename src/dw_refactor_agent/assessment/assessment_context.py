@@ -11,8 +11,11 @@ from dw_refactor_agent.assessment.project_facts.asset_catalog import (
     build_asset_catalog,
     ensure_asset_catalog,
 )
-from dw_refactor_agent.config import determine_layer
-from dw_refactor_agent.lineage.table_graph import build_table_layer_map
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
+    SemanticCoverage,
+)
+from dw_refactor_agent.config import UnavailableModelSection, determine_layer
 from dw_refactor_agent.lineage.view import LineageView
 
 
@@ -50,24 +53,72 @@ class AssessmentContext:
         self.assets = ensure_asset_catalog(self.assets)
 
     @_cached_property
+    def model_views(self) -> dict[str, AssessmentModelSemantics]:
+        return {
+            str(name).split(".")[-1]: AssessmentModelSemantics.from_metadata(
+                metadata,
+                source=f"assessment model {name}",
+            )
+            for name, metadata in (self.models or {}).items()
+            if isinstance(metadata, dict)
+        }
+
+    def model_view(self, table_name: str) -> AssessmentModelSemantics | None:
+        return self.model_views.get(str(table_name).split(".")[-1])
+
+    def operational_layer(self, table_name: str) -> str | None:
+        view = self.model_view(table_name)
+        return view.operational_layer if view is not None else None
+
+    def semantic_coverage(
+        self,
+        eligible_names,
+        sections,
+    ) -> SemanticCoverage:
+        views = {
+            str(name): view
+            for name in eligible_names
+            for view in [self.model_view(name)]
+            if view is not None
+        }
+        return SemanticCoverage.build(
+            views,
+            eligible_names,
+            sections,
+        )
+
+    @_cached_property
     def tables(self) -> list:
         tables = []
         for table in self.lineage.tables():
             row = dict(table.raw)
             if row.get("name"):
                 short_name = str(row["name"]).split(".")[-1]
-                metadata = (self.models or {}).get(short_name) or {}
-                layer = metadata.get("layer") or determine_layer(
-                    short_name,
-                    self.project,
+                view = self.model_view(short_name)
+                layer = (
+                    view.layer
+                    if view is not None
+                    else determine_layer(short_name, self.project)
                 )
-                row["layer"] = str(layer or "OTHER").upper()
+                if isinstance(layer, UnavailableModelSection):
+                    layer = None
+                row["layer"] = str(layer).upper() if layer else None
+                row["semantic_status"] = (
+                    "quarantined"
+                    if view is not None
+                    and "classification" in view.quarantined_sections
+                    else "active"
+                )
             tables.append(row)
         return tables
 
     @_cached_property
     def table_layers(self) -> dict:
-        return build_table_layer_map(self.tables, self.project, self.models)
+        return {
+            str(table.get("name")): table.get("layer")
+            for table in self.tables
+            if table.get("name")
+        }
 
     @_cached_property
     def upstream(self) -> dict:

@@ -10,6 +10,13 @@ from typing import Optional
 import yaml
 
 from . import core
+from .model_governance import (
+    UnavailableModelSection,
+    UnsupportedModelGovernanceError,
+    get_operational_layer,
+    get_semantic_layer,
+    validate_model_metadata,
+)
 
 _model_metadata_cache = {}
 _MID_LAYERS = {"DIM", "DWD", "DWS"}
@@ -375,48 +382,102 @@ def model_path_for_table(
 
 
 def load_model_metadata(project: str) -> dict:
-    """Load project models/{table}.yaml table-level metadata."""
+    """Load validated, governance-aware model metadata."""
     if project in _model_metadata_cache:
         return _model_metadata_cache[project]
 
+    metadata = _load_model_metadata_files(project, governed=True)
+    _model_metadata_cache[project] = metadata
+    return metadata
+
+
+def load_raw_model_metadata(project: str) -> dict:
+    """Load lossless YAML documents keyed by project-relative file identity."""
+    return _load_model_metadata_files(project, governed=False)
+
+
+def _load_model_metadata_files(project: str, *, governed: bool) -> dict:
     cfg = core.PROJECT_CONFIG.get(project)
     if not cfg:
-        _model_metadata_cache[project] = {}
         return {}
 
     model_paths = iter_project_asset_files(project, "models", "*.yaml")
     if not model_paths:
-        _model_metadata_cache[project] = {}
         return {}
 
     metadata = {}
+    governed_names = {}
     for model_path in model_paths:
-        raw = (
-            yaml.safe_load(model_path.read_text(encoding=core.TEXT_ENCODING))
-            or {}
+        loaded = yaml.safe_load(
+            model_path.read_text(encoding=core.TEXT_ENCODING)
         )
-        if not isinstance(raw, dict):
+        if not governed:
+            try:
+                identity = model_path.relative_to(project_dir(project))
+            except ValueError:
+                identity = model_path
+            metadata[identity.as_posix()] = loaded
             continue
-        name = raw.get("name") or model_path.stem
+        raw = {} if loaded is None else loaded
+        if not isinstance(raw, dict):
+            validate_model_metadata(raw, source=str(model_path))
+        declared_name = raw.get("name")
+        name = (
+            model_path.stem if declared_name in (None, "") else declared_name
+        )
         raw = dict(raw)
         raw["name"] = name
-        metadata[name] = raw
-
-    _model_metadata_cache[project] = metadata
+        model = validate_model_metadata(
+            raw,
+            source=str(model_path),
+        )
+        governed_name = str(model["name"])
+        name_key = governed_name.casefold()
+        if name_key in governed_names:
+            raise UnsupportedModelGovernanceError(
+                "model metadata names collide under case-insensitive lookup: "
+                f"{governed_names[name_key]!r} and {governed_name!r}"
+            )
+        governed_names[name_key] = governed_name
+        metadata[governed_name] = model
     return metadata
 
 
 def get_model_metadata(table_name: str, project: str) -> Optional[dict]:
     short = table_name.split(".")[-1]
-    return load_model_metadata(project).get(short)
+    models = load_model_metadata(project)
+    matches = [
+        metadata
+        for name, metadata in models.items()
+        if str(name).casefold() == short.casefold()
+    ]
+    if len(matches) > 1:
+        raise UnsupportedModelGovernanceError(
+            "model metadata names collide under case-insensitive lookup: "
+            f"{short!r}"
+        )
+    return matches[0] if matches else None
 
 
-def get_model_layer(table_name: str, project: str) -> Optional[str]:
+def get_model_layer(
+    table_name: str,
+    project: str,
+) -> Optional[str] | UnavailableModelSection:
     metadata = get_model_metadata(table_name, project)
     if not metadata:
         return None
-    layer = metadata.get("layer")
-    return str(layer).upper() if layer else None
+    return get_semantic_layer(metadata)
+
+
+def get_model_operational_layer(
+    table_name: str,
+    project: str,
+) -> Optional[str]:
+    """Return the deterministic runtime layer for one model."""
+    metadata = get_model_metadata(table_name, project)
+    if not metadata:
+        return None
+    return get_operational_layer(metadata)
 
 
 def get_model_names_by_layer(project: str, layer: str) -> list[str]:
@@ -424,18 +485,50 @@ def get_model_names_by_layer(project: str, layer: str) -> list[str]:
     target_layer = str(layer).upper()
     names = []
     for name, metadata in load_model_metadata(project).items():
-        model_layer = metadata.get("layer")
-        if model_layer and str(model_layer).upper() == target_layer:
+        model_layer = get_semantic_layer(metadata)
+        if isinstance(model_layer, UnavailableModelSection):
+            continue
+        if model_layer == target_layer:
             names.append(name)
     return sorted(names)
 
 
-def determine_layer(table_name: str, project: str = None) -> str:
+def get_model_names_by_operational_layer(
+    project: str,
+    layer: str,
+) -> list[str]:
+    """Return model names routed through one deterministic asset layer."""
+    target_layer = str(layer).upper()
+    return sorted(
+        name
+        for name, metadata in load_model_metadata(project).items()
+        if get_operational_layer(metadata) == target_layer
+    )
+
+
+def determine_layer(
+    table_name: str,
+    project: str = None,
+) -> str | UnavailableModelSection:
     """Return table layer from explicit model metadata."""
     short = table_name.split(".")[-1]
     if not project:
         return "OTHER"
-    return get_model_layer(short, project) or "OTHER"
+    layer = get_model_layer(short, project)
+    if isinstance(layer, UnavailableModelSection):
+        return layer
+    return layer or "OTHER"
+
+
+def determine_operational_layer(
+    table_name: str,
+    project: str = None,
+) -> str:
+    """Return the deterministic runtime layer without semantic fallback."""
+    short = table_name.split(".")[-1]
+    if not project:
+        return "OTHER"
+    return get_model_operational_layer(short, project) or "OTHER"
 
 
 def layer_rank(layer_name: str) -> int:

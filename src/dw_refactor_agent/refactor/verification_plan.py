@@ -23,6 +23,8 @@ from dw_refactor_agent.ddl_deriver.schema_ids import (
 from dw_refactor_agent.execution.model_config import (
     ExecutionConfigError,
     execution_config_for_model,
+    normalize_execution_mode,
+    require_runnable_execution,
     slice_config_from_mapping,
 )
 from dw_refactor_agent.execution.schedule_graph import ScheduleGraph
@@ -172,7 +174,7 @@ def _job_entry(
     return {
         "job": job_name,
         "file": _relative(task_path),
-        "layer": config.determine_layer(target_table, project),
+        "layer": config.determine_operational_layer(target_table, project),
         "target": target_table,
     }
 
@@ -452,6 +454,7 @@ def build_verification_plan(
             ),
         }
     jobs_to_run = [job_entries[job_name] for job_name in sorted_jobs]
+    _validate_runnable_job_models(project, jobs_to_run, metadata_errors)
 
     schedule_diagnostics = []
     if schedule_graph is not None and lineage_data:
@@ -982,10 +985,25 @@ def _table_execution_slice_metadata(
     table: str,
     metadata_errors: list[dict],
 ) -> dict | None:
-    metadata = config.get_model_metadata(table, project) or {}
-    raw_execution = metadata.get("execution") or {}
-    if not isinstance(raw_execution, dict):
-        raw_execution = {}
+    metadata = config.get_model_metadata(table, project)
+    if metadata is None:
+        return None
+    try:
+        raw_execution = execution_config_for_model(table, metadata)
+        execution_mode = normalize_execution_mode(
+            table,
+            raw_execution.get("mode"),
+        )
+    except ExecutionConfigError as exc:
+        _add_validation_error(
+            metadata_errors,
+            table,
+            "execution",
+            str(exc),
+        )
+        return None
+    if execution_mode == "taskless":
+        return None
     project_execution = (config.PROJECT_CONFIG.get(project) or {}).get(
         "execution"
     ) or {}
@@ -1043,12 +1061,43 @@ def _table_execution_slice_metadata(
 
 
 def _is_incremental_model(project: str, table: str) -> bool:
-    metadata = config.get_model_metadata(table, project) or {}
+    metadata = config.get_model_metadata(table, project)
+    if metadata is None:
+        return True
     raw_execution = execution_config_for_model(table, metadata)
+    if (
+        normalize_execution_mode(table, raw_execution.get("mode"))
+        == "taskless"
+    ):
+        return False
     materialized = str(
         raw_execution.get("materialized") or "incremental"
     ).strip()
     return materialized.lower() != "full"
+
+
+def _validate_runnable_job_models(
+    project: str,
+    jobs_to_run: list[dict],
+    metadata_errors: list[dict],
+) -> None:
+    for job in jobs_to_run:
+        table = str(job.get("target") or job.get("job") or "")
+        if not table:
+            continue
+        metadata = config.get_model_metadata(table, project)
+        if metadata is None:
+            continue
+        try:
+            raw_execution = execution_config_for_model(table, metadata)
+            require_runnable_execution(table, raw_execution)
+        except ExecutionConfigError as exc:
+            _add_validation_error(
+                metadata_errors,
+                table,
+                "execution.mode",
+                str(exc),
+            )
 
 
 def _partition_required_jobs(
@@ -1059,7 +1108,19 @@ def _partition_required_jobs(
     jobs = []
     for job in jobs_to_run:
         table = job.get("target") or job.get("job")
-        if not table or not _is_incremental_model(project, table):
+        if not table:
+            continue
+        try:
+            is_incremental = _is_incremental_model(project, table)
+        except ExecutionConfigError as exc:
+            _add_validation_error(
+                metadata_errors,
+                table,
+                "execution.mode",
+                str(exc),
+            )
+            continue
+        if not is_incremental:
             continue
         before_error_count = len(metadata_errors)
         slice_metadata = _table_execution_slice_metadata(
@@ -1596,7 +1657,10 @@ def _ads_schema_change_tables(
     for change in ddl_changes:
         for key in ("table_name", "old_name", "new_name"):
             table = _short_name(change.get(key))
-            if table and config.determine_layer(table, project) == "ADS":
+            if (
+                table
+                and config.determine_operational_layer(table, project) == "ADS"
+            ):
                 tables.add(table)
     return sorted(tables)
 

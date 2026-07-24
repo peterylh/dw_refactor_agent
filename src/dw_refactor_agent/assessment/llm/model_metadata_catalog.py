@@ -24,6 +24,12 @@ if str(_src_root) not in sys.path:
 from dw_refactor_agent.assessment.llm.inspection_contract import (
     business_process_codes,
 )
+from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    MetadataPublicationSnapshot,
+    capture_metadata_publication_snapshot,
+    metadata_publication_lock,
+    transactional_metadata_publication,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import (
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
     RESOLUTION_REINSPECTION_ERROR_KEY,
@@ -39,8 +45,14 @@ from dw_refactor_agent.assessment.project_facts.business_semantics import (
 from dw_refactor_agent.assessment.project_facts.entity_metadata import (
     normalize_entities,
 )
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
+    CanonicalSemanticPayload,
+)
 from dw_refactor_agent.config import (
-    TEXT_ENCODING,
+    UnavailableModelSection,
+    UnavailableModelSectionUsageError,
+    get_execution_contract,
 )
 
 WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
@@ -85,26 +97,53 @@ def _catalog_model_payload(
     existing: dict[str, Any],
     mapping: dict[str, Any],
 ) -> dict[str, Any]:
+    if isinstance(existing, CanonicalSemanticPayload):
+        semantic_existing = CanonicalSemanticPayload(existing)
+        existing_execution = {}
+    else:
+        view = AssessmentModelSemantics.from_metadata(
+            existing,
+            source=f"catalog model {table_name}",
+        )
+        unavailable = [
+            section
+            for section in ("classification", "business_semantics")
+            if view.status(section) == "quarantined"
+        ]
+        if unavailable:
+            raise UnavailableModelSectionUsageError(
+                f"catalog model {table_name} has quarantined sections: "
+                f"{', '.join(unavailable)}"
+            )
+        semantic_existing = view.canonical_semantic_mapping()
+        existing_execution = get_execution_contract(view.model)
     layer = str(
         mapping.get("layer")
-        or existing.get("layer")
+        or semantic_existing.get("layer")
         or _layer_from_table_name(table_name)
     ).upper()
     table_type = str(
         mapping.get("table_type")
-        or existing.get("table_type")
+        or semantic_existing.get("table_type")
         or _infer_table_type(table_name, layer)
     ).strip()
     mapped_execution = mapping.get("execution")
     if isinstance(mapped_execution, dict):
         execution_payload = dict(mapped_execution)
     else:
-        execution_payload = dict(existing.get("execution") or {})
-    materialized = _materialized_for_write(
-        execution_payload.get("materialized")
-        or mapping.get("materialized")
-        or "",
-        layer,
+        execution_payload = existing_execution
+    execution_mode = (
+        str(execution_payload.get("mode") or "task").strip().casefold()
+    )
+    materialized = (
+        ""
+        if execution_mode == "taskless"
+        else _materialized_for_write(
+            execution_payload.get("materialized")
+            or mapping.get("materialized")
+            or "",
+            layer,
+        )
     )
 
     updated = dict(existing)
@@ -112,7 +151,10 @@ def _catalog_model_payload(
     updated["name"] = table_name
     updated["layer"] = layer
     updated["table_type"] = table_type or "other"
-    if materialized:
+    if execution_mode == "taskless":
+        updated["execution"] = {"mode": "taskless"}
+        _drop_deprecated_execution_config(updated)
+    elif materialized:
         execution_payload["materialized"] = materialized
         updated["execution"] = execution_payload
         _drop_deprecated_execution_config(updated)
@@ -120,6 +162,19 @@ def _catalog_model_payload(
     data_domain = str(mapping.get("data_domain") or "").strip()
     business_area = str(mapping.get("business_area") or "").strip().upper()
     business_process = str(mapping.get("business_process") or "").strip()
+    business_process_mode = str(
+        mapping.get("business_process_mode") or ""
+    ).strip()
+    business_processes = [
+        str(code).strip()
+        for code in mapping.get("business_processes") or []
+        if str(code).strip()
+    ]
+    business_process_sources = [
+        str(source).strip()
+        for source in mapping.get("business_process_sources") or []
+        if str(source).strip()
+    ]
     semantic_subject = str(mapping.get("semantic_subject") or "").strip()
     if layer in DATA_DOMAIN_LAYERS and data_domain:
         updated["data_domain"] = data_domain
@@ -132,17 +187,40 @@ def _catalog_model_payload(
     if table_type == "dimension" and semantic_subject:
         updated["semantic_subject"] = semantic_subject
         updated.pop("business_process", None)
+        updated.pop("business_process_mode", None)
+        updated.pop("business_processes", None)
+        updated.pop("business_process_sources", None)
     elif table_type == "fact":
-        if business_process:
+        if business_process_mode == "composite":
+            updated.pop("business_process", None)
+            updated["business_process_mode"] = "composite"
+            updated["business_process_sources"] = business_process_sources
+            if business_processes:
+                updated["business_processes"] = business_processes
+            else:
+                updated.pop("business_processes", None)
+        elif business_process:
             updated["business_process"] = business_process
+            updated.pop("business_process_mode", None)
+            updated.pop("business_processes", None)
+            updated.pop("business_process_sources", None)
         else:
             updated.pop("business_process", None)
+            updated.pop("business_process_mode", None)
+            updated.pop("business_processes", None)
+            updated.pop("business_process_sources", None)
         updated.pop("semantic_subject", None)
     elif table_type == "dimension":
         updated.pop("business_process", None)
+        updated.pop("business_process_mode", None)
+        updated.pop("business_processes", None)
+        updated.pop("business_process_sources", None)
         updated.pop("semantic_subject", None)
     else:
         updated.pop("business_process", None)
+        updated.pop("business_process_mode", None)
+        updated.pop("business_processes", None)
+        updated.pop("business_process_sources", None)
         updated.pop("semantic_subject", None)
 
     if layer == "DIM":
@@ -179,12 +257,18 @@ def _existing_catalog_assignment(
     table_name: str,
     existing_metadata: dict[str, Any] | None,
     field: str,
-) -> dict[str, Any]:
+) -> dict[str, Any] | UnavailableModelSection:
     existing_mapping = catalog_mapping_for_model(
         catalog,
         table_name,
-        existing_metadata or {},
+        (
+            existing_metadata
+            if existing_metadata
+            else CanonicalSemanticPayload()
+        ),
     )
+    if isinstance(existing_mapping, UnavailableModelSection):
+        return existing_mapping
     if not existing_mapping.get(field):
         return {}
     return {
@@ -274,14 +358,19 @@ def catalog_discovery_model_mapping(
         if catalog_subject:
             mapping["semantic_subject"] = catalog_subject
         else:
-            mapping.update(
-                _existing_catalog_assignment(
-                    catalog=catalog,
-                    table_name=result.table_name,
-                    existing_metadata=existing_metadata,
-                    field="semantic_subject",
-                )
+            existing_assignment = _existing_catalog_assignment(
+                catalog=catalog,
+                table_name=result.table_name,
+                existing_metadata=existing_metadata,
+                field="semantic_subject",
             )
+            if isinstance(existing_assignment, UnavailableModelSection):
+                _record_quarantined_existing_semantics(
+                    result,
+                    existing_assignment,
+                )
+            else:
+                mapping.update(existing_assignment)
         if result.dimension_role:
             mapping["dimension_role"] = result.dimension_role
         if result.dimension_content_type:
@@ -290,6 +379,29 @@ def catalog_discovery_model_mapping(
 
     if table_type == "fact":
         processes = _business_processes_from_result(result)
+        if result.business_process_mode == "composite":
+            if not processes:
+                return mapping
+            catalog_processes = [
+                catalog_code
+                for process in processes
+                for catalog_code in [
+                    _catalog_entry_code(
+                        catalog,
+                        "business_processes",
+                        process,
+                    )
+                ]
+                if catalog_code
+            ]
+            if len(catalog_processes) != len(processes):
+                return mapping
+            mapping["business_process_mode"] = "composite"
+            mapping["business_processes"] = catalog_processes
+            mapping["business_process_sources"] = list(
+                result.business_process_sources
+            )
+            return mapping
         catalog_process = (
             _catalog_entry_code(
                 catalog,
@@ -302,17 +414,38 @@ def catalog_discovery_model_mapping(
         if catalog_process:
             mapping["business_process"] = catalog_process
         else:
-            mapping.update(
-                _existing_catalog_assignment(
-                    catalog=catalog,
-                    table_name=result.table_name,
-                    existing_metadata=existing_metadata,
-                    field="business_process",
-                )
+            existing_assignment = _existing_catalog_assignment(
+                catalog=catalog,
+                table_name=result.table_name,
+                existing_metadata=existing_metadata,
+                field="business_process",
             )
+            if isinstance(existing_assignment, UnavailableModelSection):
+                _record_quarantined_existing_semantics(
+                    result,
+                    existing_assignment,
+                )
+            else:
+                mapping.update(existing_assignment)
         return mapping
 
     return mapping
+
+
+def _record_quarantined_existing_semantics(
+    result: TableInspectResult,
+    unavailable: UnavailableModelSection,
+) -> None:
+    result.validation.setdefault(
+        "not_assessed_existing_model_sections",
+        [],
+    ).append(
+        {
+            "status": "quarantined",
+            "section": unavailable.section,
+            "reasons": list(unavailable.reasons),
+        }
+    )
 
 
 def _resolved_results_for_catalog_discovery(
@@ -344,21 +477,43 @@ def update_model_yaml_from_catalog(
     *,
     dry_run: bool = False,
     write_scope: str = "business",
+    existing_model: dict[str, Any] | None = None,
+    path: Path | None = None,
+    expected_snapshot: MetadataPublicationSnapshot | None = None,
+    include_model_metadata: bool = False,
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
         raise ValueError("catalog 回写仅支持 write_scope=all/table/business")
 
-    path = model_path_for_table(
-        project,
-        table_name,
-        layer=mapping.get("layer"),
-    )
-    existing = _existing_model_data(path)
+    if (
+        existing_model is not None
+        and not dry_run
+        and expected_snapshot is None
+    ):
+        raise ValueError(
+            "non-dry-run catalog update with supplied metadata requires CAS snapshot"
+        )
+    if path is None:
+        path = model_path_for_table(
+            project,
+            table_name,
+            layer=mapping.get("layer"),
+        )
+    if existing_model is None and not dry_run:
+        with metadata_publication_lock(project):
+            expected_snapshot = capture_metadata_publication_snapshot(project)
+            existing = _existing_model_data(path)
+    else:
+        existing = (
+            dict(existing_model)
+            if existing_model is not None
+            else _existing_model_data(path)
+        )
     previous = dict(existing)
     updated = _catalog_model_payload(
         table_name=table_name,
-        existing=existing,
+        existing=(existing if existing else CanonicalSemanticPayload()),
         mapping=mapping,
     )
     if write_scope == "table":
@@ -366,6 +521,9 @@ def update_model_yaml_from_catalog(
             "data_domain",
             "business_area",
             "business_process",
+            "business_process_mode",
+            "business_processes",
+            "business_process_sources",
             "semantic_subject",
         ):
             if key not in previous:
@@ -381,10 +539,16 @@ def update_model_yaml_from_catalog(
 
     changed = updated != previous
     if changed and not dry_run:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
-            encoding=TEXT_ENCODING,
+        transactional_metadata_publication(
+            project,
+            {
+                path: yaml.safe_dump(
+                    updated,
+                    allow_unicode=True,
+                    sort_keys=False,
+                )
+            },
+            expected_snapshot=expected_snapshot,
         )
 
     business_changed = any(
@@ -393,12 +557,15 @@ def update_model_yaml_from_catalog(
             "data_domain",
             "business_area",
             "business_process",
+            "business_process_mode",
+            "business_processes",
+            "business_process_sources",
             "semantic_subject",
             "dimension_role",
             "dimension_content_type",
         )
     )
-    return {
+    result = {
         "table": table_name,
         "path": str(path),
         "status": "passed",
@@ -422,7 +589,13 @@ def update_model_yaml_from_catalog(
         "previous_business_area": previous.get("business_area"),
         "business_area": updated.get("business_area"),
         "business_process": updated.get("business_process"),
+        "business_process_mode": updated.get("business_process_mode"),
+        "business_processes": updated.get("business_processes"),
+        "business_process_sources": updated.get("business_process_sources"),
         "semantic_subject": updated.get("semantic_subject"),
         "dimension_role": updated.get("dimension_role"),
         "dimension_content_type": updated.get("dimension_content_type"),
     }
+    if include_model_metadata:
+        result["model_metadata"] = updated
+    return result

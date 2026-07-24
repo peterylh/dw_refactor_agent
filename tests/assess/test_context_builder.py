@@ -4,19 +4,29 @@ import yaml
 import dw_refactor_agent.assessment.llm.context_builder as context_builder_module
 import dw_refactor_agent.config as config
 from dw_refactor_agent.assessment.llm.context_builder import (
+    InspectionContextSetError,
     build_contexts,
     extract_column_lineage,
     extract_dependencies,
 )
 
 MODEL_METADATA = {
-    "dwd_customer": {"name": "dwd_customer", "layer": "DWD"},
-    "dwd_order_detail": {"name": "dwd_order_detail", "layer": "DWD"},
+    "dwd_customer": {"version": 2, "name": "dwd_customer", "layer": "DWD"},
+    "dwd_order_detail": {
+        "version": 2,
+        "name": "dwd_order_detail",
+        "layer": "DWD",
+    },
     "dws_store_sales_daily": {
+        "version": 2,
         "name": "dws_store_sales_daily",
         "layer": "DWS",
     },
-    "ads_sales_dashboard": {"name": "ads_sales_dashboard", "layer": "ADS"},
+    "ads_sales_dashboard": {
+        "version": 2,
+        "name": "ads_sales_dashboard",
+        "layer": "ADS",
+    },
 }
 
 
@@ -40,6 +50,8 @@ def _build_contexts_for_graph(
     ddl_files=None,
     task_files=None,
     downstream=None,
+    inspection_targets=None,
+    asset_content=None,
 ):
     ddl_dir = tmp_path / "ddl"
     tasks_dir = tmp_path / "tasks"
@@ -62,6 +74,14 @@ def _build_contexts_for_graph(
             return []
 
     monkeypatch.setattr(context_builder_module, "LineageView", FakeLineageView)
+    model_metadata = {
+        name: {
+            "version": 2,
+            "name": name,
+            **metadata,
+        }
+        for name, metadata in model_metadata.items()
+    }
     return build_contexts(
         "test_proj",
         {"tables": [{"name": name} for name in tables]},
@@ -69,7 +89,79 @@ def _build_contexts_for_graph(
         tasks_dir,
         model_metadata=model_metadata,
         metric_groups=metric_groups,
+        inspection_targets=inspection_targets,
+        asset_content=asset_content,
     )
+
+
+def test_build_contexts_uses_explicit_target_without_lineage(
+    tmp_path,
+    monkeypatch,
+):
+    contexts = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=[],
+        upstream={},
+        model_metadata={"dim_currency": {"layer": "DIM"}},
+        inspection_targets=["internal.demo.dim_currency"],
+        asset_content={
+            "dim_currency": {
+                "ddl": "CREATE TABLE demo.dim_currency (code VARCHAR(3));",
+                "etl_sql": "",
+            }
+        },
+    )
+
+    assert len(contexts) == 1
+    assert contexts[0].table_name == "dim_currency"
+    assert contexts[0].table_identity == "internal.demo.dim_currency"
+    assert contexts[0].ddl.startswith("CREATE TABLE")
+    assert contexts[0].etl_sql == ""
+
+
+def test_build_contexts_explicit_targets_are_exact_and_keep_short_lineage(
+    tmp_path,
+    monkeypatch,
+):
+    contexts = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=["dwd_orders", "dws_order_daily", "dws_unrelated"],
+        upstream={"dws_order_daily": {"dwd_orders"}},
+        model_metadata={
+            "dwd_orders": {"layer": "DWD"},
+            "dws_order_daily": {"layer": "DWS"},
+            "dws_unrelated": {"layer": "DWS"},
+        },
+        inspection_targets=["internal.demo.dws_order_daily"],
+    )
+
+    assert [context.table_identity for context in contexts] == [
+        "internal.demo.dws_order_daily"
+    ]
+    assert contexts[0].upstream_tables == ["dwd_orders"]
+
+
+def test_build_contexts_blocks_ambiguous_lineage_for_explicit_target(
+    tmp_path,
+    monkeypatch,
+):
+    with pytest.raises(
+        InspectionContextSetError,
+        match="ambiguous qualified lineage candidates",
+    ):
+        _build_contexts_for_graph(
+            tmp_path,
+            monkeypatch,
+            tables=[],
+            upstream={
+                "catalog_a.db_a.dim_currency": set(),
+                "catalog_b.db_b.dim_currency": set(),
+            },
+            model_metadata={"dim_currency": {"layer": "DIM"}},
+            inspection_targets=["internal.demo.dim_currency"],
+        )
 
 
 def test_extract_dependencies_collapses_transient_tables():
@@ -291,12 +383,71 @@ def test_build_contexts_warns_without_parsing_tasks_when_lineage_empty(
         {"tables": [{"name": "dwd_order_clean"}], "edges": []},
         ddl_dir,
         tasks_dir,
-        model_metadata={"dwd_order_clean": {"layer": "DWD"}},
+        model_metadata={
+            "dwd_order_clean": {
+                "version": 2,
+                "name": "dwd_order_clean",
+                "layer": "DWD",
+            }
+        },
     )[0]
 
     assert context.upstream_tables == []
     assert context.downstream_tables == []
     assert "lineage graph is empty" in caplog.text.lower()
+
+
+def test_build_contexts_clears_stale_metadata_cache_inside_snapshot(
+    tmp_path, monkeypatch
+):
+    project = "context_consistent_snapshot"
+    project_dir = tmp_path / project
+    models_dir = project_dir / "mid" / "models"
+    ddl_dir = tmp_path / "ddl"
+    tasks_dir = tmp_path / "tasks"
+    for directory in (models_dir, ddl_dir, tasks_dir):
+        directory.mkdir(parents=True)
+    model_path = models_dir / "fact.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {"version": 2, "name": "fact", "layer": "DWD"},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ddl_dir / "fact.sql").write_text(
+        "CREATE TABLE fact (id BIGINT);",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {"dir": project, "catalog": "internal", "db": "demo"},
+    )
+    monkeypatch.setattr(
+        context_builder_module,
+        "load_model_metadata",
+        config.load_model_metadata,
+    )
+    config.clear_model_metadata_cache()
+    assert config.load_model_metadata(project)["fact"]["layer"] == "DWD"
+    model_path.write_text(
+        yaml.safe_dump(
+            {"version": 2, "name": "fact", "layer": "DWS"},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    context = build_contexts(
+        project,
+        {"tables": [{"name": "fact"}], "edges": []},
+        ddl_dir,
+        tasks_dir,
+    )[0]
+
+    assert context.layer == "DWS"
 
 
 def test_build_contexts_reads_default_mid_asset_dirs(
@@ -376,9 +527,17 @@ def test_build_contexts_excludes_fixed_boundaries_with_wrong_declared_layer(
         {"dir": project, "catalog": "internal", "db": "demo"},
     )
     metadata = {
-        "orders": {"name": "orders", "layer": "DWD"},
-        "order_summary": {"name": "order_summary", "layer": "DWS"},
-        "dashboard": {"name": "dashboard", "layer": "DWD"},
+        "orders": {"version": 2, "name": "orders", "layer": "DWD"},
+        "order_summary": {
+            "version": 2,
+            "name": "order_summary",
+            "layer": "DWS",
+        },
+        "dashboard": {
+            "version": 2,
+            "name": "dashboard",
+            "layer": "DWD",
+        },
     }
 
     contexts = build_contexts(
@@ -422,7 +581,9 @@ def test_generate_context_roles_ignore_stale_model_directories(
     contexts = build_contexts(
         project,
         {"tables": [{"name": "orders"}], "edges": []},
-        model_metadata={"orders": {"name": "orders", "layer": "DWD"}},
+        model_metadata={
+            "orders": {"version": 2, "name": "orders", "layer": "DWD"}
+        },
         use_model_metadata_asset_roles=True,
     )
 

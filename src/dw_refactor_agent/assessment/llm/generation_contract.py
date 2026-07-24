@@ -13,14 +13,53 @@ from dw_refactor_agent.assessment.llm.inspection_contract import (
     business_process_codes,
     canonical_semantic_code,
 )
+from dw_refactor_agent.assessment.llm.inspection_issues import (
+    InspectionIssue,
+    UnknownInspectionIssueError,
+    generation_error_to_issue,
+    issues_to_dicts,
+)
 from dw_refactor_agent.config import TEXT_ENCODING
 
 DEFAULT_SLICE_PERIOD = "D"
+GENERATION_ERROR_TYPES = frozenset(
+    {
+        "bridge_entities_invalid",
+        "bridge_grain_invalid",
+        "bridge_semantics_invalid",
+        "business_process_ambiguous",
+        "business_process_missing",
+        "business_process_unknown",
+        "composite_process_invalid",
+        "dimension_primary_entity_invalid",
+        "duplicate_entity_codes",
+        "entity_key_missing",
+        "entity_relationship_origin_missing",
+        "entity_relationship_origin_unknown",
+        "execution_materialized_mismatch",
+        "execution_main_task_missing",
+        "execution_partition_overwrite_unsupported",
+        "execution_slice_column_missing",
+        "execution_slice_invalid",
+        "execution_slice_missing",
+        "execution_strategy_invalid",
+        "execution_task_binding_conflict",
+        "execution_task_missing",
+        "grain_column_missing",
+        "grain_entity_unknown",
+        "inspection_context_set_mismatch",
+        "llm_inspection_blocked",
+        "llm_inspection_missing",
+        "semantic_subject_missing",
+        "semantic_subject_unknown",
+    }
+)
 REINSPECTION_ERROR_TYPES = frozenset(
     {
         "business_process_ambiguous",
         "business_process_missing",
         "business_process_unknown",
+        "composite_process_invalid",
         "bridge_entities_invalid",
         "bridge_grain_invalid",
         "bridge_semantics_invalid",
@@ -56,6 +95,9 @@ def _task_facts(
 def _task_sql(tasks: list[dict[str, Any]]) -> str:
     statements = []
     for task in tasks:
+        if "sql" in task:
+            statements.append(str(task.get("sql") or ""))
+            continue
         path = task.get("path")
         if path:
             statements.append(Path(path).read_text(encoding=TEXT_ENCODING))
@@ -406,6 +448,8 @@ def infer_execution_mapping(
     layer: str,
 ) -> dict[str, Any]:
     """Infer an executable model contract from task SQL and asset facts."""
+    if str(asset.get("producer_mode") or "").casefold() == "external":
+        return {"mode": "taskless"}
     main_tasks = _task_facts(asset, full_refresh=False)
     if not main_tasks:
         materialized = "incremental" if layer in {"DWD", "DWS"} else "full"
@@ -442,7 +486,35 @@ def _error(
     table_name: str,
     message: str,
 ) -> dict[str, str]:
+    if error_type not in GENERATION_ERROR_TYPES:
+        raise UnknownInspectionIssueError(
+            f"unregistered generation error type: {error_type!r}"
+        )
     return {"type": error_type, "table": table_name, "message": message}
+
+
+def _generation_issues(
+    errors: list[dict[str, str]],
+    inspections: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    issues = []
+    for error in errors:
+        if error.get("type") == "llm_inspection_blocked":
+            inspection = inspections.get(
+                str(error.get("table") or "").casefold()
+            )
+            raw_issues = (
+                inspection.get("issues")
+                if isinstance(inspection, dict)
+                else None
+            )
+            if isinstance(raw_issues, list) and raw_issues:
+                issues.extend(
+                    InspectionIssue.from_dict(item) for item in raw_issues
+                )
+                continue
+        issues.append(generation_error_to_issue(error))
+    return issues_to_dicts(issues)
 
 
 def _validate_execution(
@@ -451,7 +523,49 @@ def _validate_execution(
     asset: dict[str, Any],
 ) -> list[dict[str, str]]:
     main_tasks = _task_facts(asset, full_refresh=False)
+    full_refresh_tasks = _task_facts(asset, full_refresh=True)
+    producer_mode = str(asset.get("producer_mode") or "").casefold()
+    execution = metadata.get("execution") or {}
+    execution_mode = str(execution.get("mode") or "task").strip().casefold()
     if not main_tasks:
+        if full_refresh_tasks:
+            errors = [
+                _error(
+                    "execution_main_task_missing",
+                    table_name,
+                    "full-refresh companion exists without a main task SQL",
+                )
+            ]
+            if producer_mode == "external":
+                errors.append(
+                    _error(
+                        "execution_task_binding_conflict",
+                        table_name,
+                        "external taskless table cannot have task SQL",
+                    )
+                )
+            return errors
+        if producer_mode == "external":
+            if execution_mode != "taskless" or set(execution) != {"mode"}:
+                return [
+                    _error(
+                        "execution_task_binding_conflict",
+                        table_name,
+                        "external producer requires execution.mode=taskless "
+                        "without task execution fields",
+                    )
+                ]
+            return []
+        if producer_mode == "task":
+            layer = str(metadata.get("layer") or "").upper()
+            return [
+                _error(
+                    "execution_task_missing",
+                    table_name,
+                    f"{layer or 'managed'} execution cannot be inferred "
+                    "without task SQL",
+                )
+            ]
         layer = str(metadata.get("layer") or "").upper()
         if layer in {"DWD", "DWS"}:
             return [
@@ -463,7 +577,14 @@ def _validate_execution(
             ]
         return []
 
-    execution = metadata.get("execution") or {}
+    if producer_mode == "external" or execution_mode == "taskless":
+        return [
+            _error(
+                "execution_task_binding_conflict",
+                table_name,
+                "task SQL cannot target a table declared as taskless",
+            )
+        ]
     materialized = str(execution.get("materialized") or "").lower()
     strategy = str(execution.get("full_refresh_strategy") or "").lower()
     task_sql = _task_sql(main_tasks)
@@ -511,11 +632,7 @@ def _validate_execution(
             )
         return errors
 
-    expected_strategy = (
-        "companion"
-        if _task_facts(asset, full_refresh=True)
-        else "replay_slices"
-    )
+    expected_strategy = "companion" if full_refresh_tasks else "replay_slices"
     if strategy != expected_strategy:
         errors.append(
             _error(
@@ -750,6 +867,9 @@ def _validate_semantics(
             )
 
     process = str(metadata.get("business_process") or "").strip()
+    process_mode = (
+        str(metadata.get("business_process_mode") or "").strip().lower()
+    )
     if table_type == "bridge":
         entity_codes = {
             _canonical_code(entity.get("code"))
@@ -807,7 +927,74 @@ def _validate_semantics(
             if inspection is not None
             else []
         )
-        if inspection is None and not process:
+        inspection_mode = (
+            str(inspection.get("business_process_mode") or "").strip().lower()
+            if inspection is not None
+            else ""
+        )
+        model_sources = {
+            str(source).strip().casefold()
+            for source in metadata.get("business_process_sources") or []
+            if str(source).strip()
+        }
+        inspection_sources = {
+            str(source).strip().casefold()
+            for source in (
+                (inspection or {}).get("business_process_sources") or []
+            )
+            if str(source).strip()
+        }
+        inspection_conflicts = [
+            str(metric).strip()
+            for metric in (
+                (inspection or {}).get("business_process_conflicts") or []
+            )
+            if str(metric).strip()
+        ]
+        model_processes = [
+            _canonical_code(code)
+            for code in metadata.get("business_processes") or []
+            if _canonical_code(code)
+        ]
+        if process_mode == "composite" or inspection_mode == "composite":
+            issues = []
+            if str(metadata.get("layer") or "").upper() != "DWS":
+                issues.append("composite process mode requires DWS")
+            if process:
+                issues.append(
+                    "composite process model must not declare one process"
+                )
+            if process_mode != "composite" or inspection_mode != "composite":
+                issues.append(
+                    "model and inspection must agree on composite process mode"
+                )
+            if len(model_sources) < 2 or model_sources != inspection_sources:
+                issues.append(
+                    "model must preserve all composite contributing sources"
+                )
+            if not model_processes or not inspected_processes:
+                issues.append(
+                    "composite process model requires at least one "
+                    "evidenced business process"
+                )
+            if inspection_conflicts:
+                issues.append(
+                    "inspection has conflicting metric process evidence: "
+                    + ", ".join(sorted(inspection_conflicts))
+                )
+            if set(model_processes) != set(inspected_processes):
+                issues.append(
+                    "model business_processes must match inspected processes"
+                )
+            if issues:
+                errors.append(
+                    _error(
+                        "composite_process_invalid",
+                        table_name,
+                        "; ".join(issues),
+                    )
+                )
+        elif inspection is None and not process:
             errors.append(
                 _error(
                     "business_process_missing",
@@ -853,6 +1040,19 @@ def _validate_semantics(
                 f"business_process={process} is absent from catalog",
             )
         )
+    for composite_process in metadata.get("business_processes") or []:
+        if not _catalog_has_code(
+            catalog,
+            "business_processes",
+            composite_process,
+        ):
+            errors.append(
+                _error(
+                    "business_process_unknown",
+                    table_name,
+                    f"business_process={composite_process} is absent from catalog",
+                )
+            )
     return errors
 
 
@@ -939,6 +1139,7 @@ def validate_generate_candidate(
         "status": "blocked" if errors else "passed",
         "error_count": len(errors),
         "errors": errors,
+        "issues": _generation_issues(errors, inspections),
         "blocked_tables": blocked_tables,
         "reinspection_tables": reinspection_tables,
     }
