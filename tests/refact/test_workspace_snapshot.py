@@ -35,8 +35,11 @@ def configured_root(tmp_path, monkeypatch):
         "warehouses/shop/mid/ddl/dws_sales.sql",
         "warehouses/shop/ads/ddl/ads_sales.sql",
         "warehouses/shop/mid/tasks/dws_sales.sql",
+        "warehouses/shop/mid/tasks/dws_sales.yaml",
         "warehouses/shop/mid/tasks/full_refresh/dws_sales.sql",
+        "warehouses/shop/mid/tasks/full_refresh/dws_sales.yml",
         "warehouses/shop/ads/tasks/ads_sales.sql",
+        "warehouses/shop/ads/tasks/ads_sales.yaml",
         "warehouses/shop/ods/models/internal/shop_ods/ods_order.yaml",
         "warehouses/shop/mid/models/dws_sales.yaml",
         "warehouses/shop/ads/models/ads_sales.yaml",
@@ -60,5 +63,18 @@ def test_relevant_file_content_changes_workspace_fingerprint(
     before = workspace_fingerprint(configured_root, "shop")
 
     path.write_text("after", encoding="utf-8")
+
+    assert workspace_fingerprint(configured_root, "shop") != before
+
+
+def test_renderer_semantics_change_changes_workspace_fingerprint(
+    configured_root, monkeypatch
+):
+    before = workspace_fingerprint(configured_root, "shop")
+    monkeypatch.setattr(
+        snapshot_module,
+        "renderer_semantics_digest",
+        lambda: "sha256:" + "f" * 64,
+    )
 
     assert workspace_fingerprint(configured_root, "shop") != before

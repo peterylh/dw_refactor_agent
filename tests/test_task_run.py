@@ -436,7 +436,11 @@ def _configure_process_plan_project(
         },
     )
     monkeypatch.setattr(task_run, "get_mysql_cmd", lambda _: ["mysql"])
-    monkeypatch.setattr(task_run, "ExecutionPlanner", lambda _: object())
+    monkeypatch.setattr(
+        task_run,
+        "ExecutionPlanner",
+        lambda _project, **_kwargs: object(),
+    )
     monkeypatch.setattr(
         task_run, "_validate_execution_plan", lambda *args, **kwargs: 0
     )

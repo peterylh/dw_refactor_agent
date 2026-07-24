@@ -205,6 +205,41 @@ def _create_demo_project(root):
     return source
 
 
+def _template_demo_task(source):
+    warehouse_path = source / "warehouse.yaml"
+    warehouse = yaml.safe_load(warehouse_path.read_text(encoding="utf-8"))
+    warehouse["task_templates"] = {
+        "version": 1,
+        "analysis": {"project": {"cdm_schema": "demo_dm"}},
+        "bindings": {"prod": {"project": {"cdm_schema": "demo_dm"}}},
+    }
+    _write_yaml(warehouse_path, warehouse)
+    task_path = source / "mid" / "tasks" / "dwd_order_detail.sql"
+    _write_text(
+        task_path,
+        """
+        TRUNCATE TABLE ${cdm_schema}.dwd_order_detail;
+        INSERT INTO ${cdm_schema}.dwd_order_detail
+        SELECT order_id FROM ${cdm_schema}.ods_order_event;
+        """,
+    )
+    _write_yaml(
+        task_path.with_suffix(".yaml"),
+        {
+            "version": 1,
+            "strict": True,
+            "project_params": [
+                {
+                    "prop": "cdm_schema",
+                    "type": "IDENTIFIER",
+                    "source": "project.cdm_schema",
+                    "required": True,
+                }
+            ],
+        },
+    )
+
+
 def test_build_temp_project_strips_layer_hints_and_seeds_empty_catalog(
     tmp_path,
 ):
@@ -266,6 +301,38 @@ def test_build_temp_project_strips_layer_hints_and_seeds_empty_catalog(
     assert "order_detail" in rewritten
 
 
+def test_build_temp_project_copies_template_contract_and_analysis_profile(
+    tmp_path,
+):
+    source_root = tmp_path / "source"
+    source = _create_demo_project(source_root)
+    _template_demo_task(source)
+
+    temp_project = build_temp_project(
+        "demo",
+        "demo_generate_llm_benchmark",
+        tmp_path / "assets",
+        source_root=source_root,
+    )
+
+    target_contract = (
+        temp_project.target_dir / "mid" / "tasks" / "order_detail.yaml"
+    )
+    target_warehouse = yaml.safe_load(
+        (temp_project.target_dir / "warehouse.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert target_contract.exists()
+    assert (
+        target_warehouse["task_templates"]["analysis"]["project"]["cdm_schema"]
+        == temp_project.database
+    )
+    assert "${cdm_schema}" in (
+        temp_project.target_dir / "mid" / "tasks" / "order_detail.sql"
+    ).read_text(encoding="utf-8")
+
+
 def test_table_mapping_salts_prefix_collisions():
     paths = [
         Path("dim_customer_profile.sql"),
@@ -319,7 +386,8 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
     source_root = tmp_path / "source"
-    _create_demo_project(source_root)
+    source = _create_demo_project(source_root)
+    _template_demo_task(source)
     seen_contexts = []
     inspector_parallelism = []
     lineage_parallelism = []

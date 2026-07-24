@@ -57,6 +57,10 @@ from dw_refactor_agent.refactor.shadow_manifest import (
     ensure_compiled_shadow_manifest,
     manifest_summary,
 )
+from dw_refactor_agent.refactor.verification_bindings import (
+    materialize_frozen_job_invocations,
+    verification_planner,
+)
 from dw_refactor_agent.refactor.verification_checks import (
     flatten_verification_checks,
 )
@@ -554,6 +558,10 @@ def _job_result(
     for key in ("execution_values",):
         if key in job:
             result[key] = job.get(key)
+    if "verification_invocations" in job:
+        result["rendered_bindings"] = deepcopy(
+            job.get("verification_invocations") or []
+        )
     if invocation_count is not None:
         result["invocation_count"] = invocation_count
     if batch_count is not None:
@@ -606,12 +614,42 @@ def _job_driver_values(job: dict, spec) -> list[str | None]:
     )
 
 
-def _job_for_driver_value(job: dict, driver_value: str | None) -> dict:
-    if driver_value is None:
-        return dict(job)
-    planned = dict(job)
-    planned["execution_values"] = [driver_value]
-    return planned
+def _invocation_driver_value(invocation, spec) -> str | None:
+    if spec.materialized == "full" or not spec.slice_param:
+        return None
+    value = invocation.session_params.get(spec.slice_param)
+    if value is None:
+        raise ExecutionConfigError(
+            f"[{spec.job_name}] frozen invocation is missing slice "
+            f"parameter {spec.slice_param!r}"
+        )
+    return str(value)
+
+
+def _materialize_job_invocation_pairs(
+    job: dict,
+    spec,
+    *,
+    planner,
+    root: Path,
+) -> list[tuple[str | None, object]]:
+    expected_values = _job_driver_values(job, spec)
+    invocations = materialize_frozen_job_invocations(
+        job,
+        planner=planner,
+        root=root,
+    )
+    pairs = [
+        (_invocation_driver_value(invocation, spec), invocation)
+        for invocation in invocations
+    ]
+    actual_values = [driver_value for driver_value, _invocation in pairs]
+    if actual_values != expected_values:
+        raise ArtifactFormatError(
+            f"[{job.get('job')}] frozen invocation order does not match "
+            "execution_values; run analyze again"
+        )
+    return pairs
 
 
 def _chunked(items: list, size: int) -> list[list]:
@@ -667,6 +705,10 @@ def _execute_invocation_batch(
     batch: list[tuple[str | None, object]],
 ) -> None:
     executor.execute_batch([invocation for _driver_value, invocation in batch])
+
+
+def _safe_batch_error(exc: Exception, batch: list[tuple]) -> str:
+    return str(exc)
 
 
 def _job_dependencies_from_plan(
@@ -793,8 +835,13 @@ def _execute_shadow_job(
             file_path,
             model_name=job.get("target") or job_name,
         )
-        driver_values = _job_driver_values(job, spec)
-    except ExecutionConfigError as exc:
+        planned_invocations = _materialize_job_invocation_pairs(
+            job,
+            spec,
+            planner=planner,
+            root=root,
+        )
+    except (ExecutionConfigError, ArtifactFormatError) as exc:
         _log(f"  [FAIL] {job_name}: {exc}")
         return _finish_timing(
             _job_result(
@@ -810,8 +857,10 @@ def _execute_shadow_job(
             job_timer,
         )
 
-    planned_invocations = []
-    for driver_idx, driver_value in enumerate(driver_values, 1):
+    driver_values = [value for value, _invocation in planned_invocations]
+    for driver_idx, (driver_value, _invocation) in enumerate(
+        planned_invocations, 1
+    ):
         if driver_value is not None:
             _log(
                 f"\n  === replay slice "
@@ -822,34 +871,6 @@ def _execute_shadow_job(
                 f"  slice {driver_idx}/{len(driver_values)}: "
                 f"{spec.slice_param or 'execution_value'}={driver_value}"
             )
-        planned_job = _job_for_driver_value(job, driver_value)
-
-        try:
-            invocations = planner.plan_shadow_job(
-                planned_job,
-                project_root=root,
-            )
-        except ExecutionConfigError as exc:
-            _log(f"  [FAIL] {job_name}: {exc}")
-            return _finish_timing(
-                _job_result(
-                    job,
-                    "failed",
-                    str(exc),
-                    invocation_count=invocation_count,
-                    invocations=invocation_results,
-                    **_job_batch_kwargs(
-                        invocation_count,
-                        invocation_parallel,
-                        batch_size,
-                    ),
-                ),
-                job_timer,
-            )
-
-        for invocation in invocations:
-            planned_invocations.append((driver_value, invocation))
-
     batches = _chunked(planned_invocations, batch_size)
     invocation_count = len(planned_invocations)
     batch_count = len(batches)
@@ -870,6 +891,7 @@ def _execute_shadow_job(
             )
             _execute_invocation_batch(executor, batch)
         except Exception as exc:
+            safe_error = _safe_batch_error(exc, batch)
             failed_invocations = []
             for batch_driver_value, batch_invocation in batch:
                 sql_path = _display_path(batch_invocation.sql_path, root)
@@ -877,18 +899,18 @@ def _execute_shadow_job(
                     _invocation_result(
                         batch_driver_value,
                         "failed",
-                        str(exc),
+                        safe_error,
                     ),
                     dict(batch_timer),
                 )
                 _log(
                     f"    SQL fail: {sql_path} "
                     f"duration={failed_invocation['duration_ms']}ms "
-                    f"error={exc}"
+                    f"error={safe_error}"
                 )
                 failed_invocations.append(failed_invocation)
             raise ShadowRunBatchError(
-                str(exc),
+                safe_error,
                 failed_invocations,
             ) from exc
         finally:
@@ -1167,14 +1189,15 @@ def _compile_shadow_manifest_phase(
         plan["_shadow_manifest_summary"] = manifest_summary(manifest)
         return manifest, _finish_timing(phase, timer)
     except Exception as exc:
+        error = str(exc)
         phase = {
             "name": "compile_shadow_manifest",
             "status": "failed",
-            "blockers": [str(exc)],
+            "blockers": [error],
             "warnings": [],
         }
         plan["_shadow_manifest_summary"] = {
-            "blockers": [str(exc)],
+            "blockers": [error],
             "warnings": [],
         }
         return None, _finish_timing(phase, timer)
@@ -1239,7 +1262,11 @@ def _dry_run_phases(
     jobs_to_run = plan.get("jobs_to_run", [])
     prod_db = plan["project_db"]
     qa_db = plan["qa_db"]
-    planner = ExecutionPlanner(plan["project"], project_root=root)
+    planner = verification_planner(
+        plan["project"],
+        root,
+        plan.get("task_rendering"),
+    )
     qa_ddl_changes = [
         _qa_ddl_change(change, prod_db, qa_db) for change in ddl_changes
     ]
@@ -1318,27 +1345,25 @@ def _dry_run_phases(
                 file_path,
                 model_name=job.get("target") or job["job"],
             )
-            driver_values = _job_driver_values(job, spec)
-            for driver_value in driver_values:
-                planned_job = _job_for_driver_value(job, driver_value)
-                planned_invocations = planner.plan_shadow_job(
-                    planned_job,
-                    project_root=root,
-                )
-                if planned_invocations:
-                    invocation_count += len(planned_invocations)
-                    if invocation_results is not None:
-                        for _ in planned_invocations:
-                            invocation_timer = _start_timing()
-                            invocation_results.append(
-                                _finish_timing(
-                                    _invocation_result(
-                                        driver_value,
-                                        "dry_run",
-                                    ),
-                                    invocation_timer,
-                                )
-                            )
+            planned_invocations = _materialize_job_invocation_pairs(
+                job,
+                spec,
+                planner=planner,
+                root=root,
+            )
+            invocation_count = len(planned_invocations)
+            if invocation_results is not None:
+                for driver_value, _invocation in planned_invocations:
+                    invocation_timer = _start_timing()
+                    invocation_results.append(
+                        _finish_timing(
+                            _invocation_result(
+                                driver_value,
+                                "dry_run",
+                            ),
+                            invocation_timer,
+                        )
+                    )
             jobs.append(
                 _finish_timing(
                     _job_result(
@@ -1355,7 +1380,7 @@ def _dry_run_phases(
                     job_timer,
                 )
             )
-        except ExecutionConfigError as exc:
+        except (ExecutionConfigError, ArtifactFormatError) as exc:
             jobs.append(
                 _finish_timing(
                     _job_result(
@@ -1416,7 +1441,11 @@ def execute_shadow_plan(
         return _finish_timing(result, result_timer)
 
     root = Path(root).resolve()
-    planner = ExecutionPlanner(plan["project"], project_root=root)
+    planner = verification_planner(
+        plan["project"],
+        root,
+        plan.get("task_rendering"),
+    )
     manifest, manifest_phase = _compile_shadow_manifest_phase(
         plan,
         root,
@@ -1735,8 +1764,10 @@ def run_shadow_plan(
                 batch_size=batch_size,
             )
         else:
-            preview_planner = ExecutionPlanner(
-                plan["project"], project_root=bundle.root
+            preview_planner = verification_planner(
+                plan["project"],
+                bundle.root,
+                plan.get("task_rendering"),
             )
             _, preview_phase = _compile_shadow_manifest_phase(
                 plan,
@@ -1830,7 +1861,11 @@ def _dry_run(
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
-    planner = ExecutionPlanner(plan["project"], project_root=root)
+    planner = verification_planner(
+        plan["project"],
+        root,
+        plan.get("task_rendering"),
+    )
 
     print(f"{'=' * 60}")
     print("=== SHADOW RUN DRY RUN ===")
@@ -1894,47 +1929,42 @@ def _dry_run(
                 file_path,
                 model_name=job.get("target") or job_name,
             )
-            driver_values = _job_driver_values(job, spec)
-        except ExecutionConfigError as exc:
+            invocation_pairs = _materialize_job_invocation_pairs(
+                job,
+                spec,
+                planner=planner,
+                root=root,
+            )
+        except (ExecutionConfigError, ArtifactFormatError) as exc:
             print(f"    [FAIL] {exc}")
             continue
 
-        for driver_idx, driver_value in enumerate(driver_values, 1):
+        for driver_idx, (driver_value, invocation) in enumerate(
+            invocation_pairs, 1
+        ):
             if driver_value is not None:
                 print(
                     f"\n    === replay slice "
-                    f"{driver_idx}/{len(driver_values)}: "
+                    f"{driver_idx}/{len(invocation_pairs)}: "
                     f"{driver_value} ==="
                 )
-            planned_job = _job_for_driver_value(job, driver_value)
-
-            try:
-                invocations = planner.plan_shadow_job(
-                    planned_job,
-                    project_root=root,
-                )
-            except ExecutionConfigError as exc:
-                print(f"    [FAIL] {exc}")
-                continue
-
-            for invocation in invocations:
-                job_manifest = manifest.jobs[job_name]
-                executor = ShadowSqlExecutor(
-                    context=job_manifest.context,
-                    qa_ready_tables=set(qa_ready_tables),
-                    run_sql_text=run_sql_text,
-                )
-                print(
-                    f"    strategy={invocation.strategy}, "
-                    f"full_refresh={int(invocation.full_refresh)}, "
-                    f"sql={invocation.sql_path}"
-                )
-                rendered = executor.render(invocation)
-                for line in rendered.splitlines()[:8]:
-                    print(f"    {line}")
-                total = len(rendered.splitlines())
-                if total > 8:
-                    print(f"    ... ({total} 行)")
+            print(
+                f"    strategy={invocation.strategy}, "
+                f"full_refresh={int(invocation.full_refresh)}, "
+                f"sql={invocation.sql_path}"
+            )
+            job_manifest = manifest.jobs[job_name]
+            executor = ShadowSqlExecutor(
+                context=job_manifest.context,
+                qa_ready_tables=set(qa_ready_tables),
+                run_sql_text=run_sql_text,
+            )
+            rendered = executor.render(invocation)
+            for line in rendered.splitlines()[:8]:
+                print(f"    {line}")
+            total = len(rendered.splitlines())
+            if total > 8:
+                print(f"    ... ({total} 行)")
 
             qa_ready_tables.update(
                 manifest.jobs[job_name].outputs or {job_name}

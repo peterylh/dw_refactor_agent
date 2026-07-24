@@ -15,7 +15,9 @@ from sqlglot.errors import ErrorLevel
 
 from dw_refactor_agent.config import TEXT_ENCODING
 from dw_refactor_agent.ddl_deriver.ddl_deriver import parse_create_table
+from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.schedule_graph import ScheduleGraph
+from dw_refactor_agent.execution.sql_executor import terminate_batch_sql_item
 from dw_refactor_agent.refactor.shadow_rewrite import (
     ReferenceRole,
     RelationRoute,
@@ -28,10 +30,14 @@ from dw_refactor_agent.refactor.shadow_scope import (
     ScopeKind,
     statement_scope,
 )
+from dw_refactor_agent.refactor.verification_bindings import (
+    materialize_frozen_job_invocations,
+)
 from dw_refactor_agent.sql.doris import (
     PartitionSelectionKind,
     parse_doris_partitions,
 )
+from dw_refactor_agent.sql.task_execution import load_execution_task_asset
 
 
 class PrefillMode(Enum):
@@ -407,22 +413,39 @@ def _job_file(root: Path, job: dict) -> Path:
     return path if path.is_absolute() else root / path
 
 
-def _job_runtime(job: dict, root: Path, planner, warnings: list[str]):
+def _job_runtime(job: dict, root: Path, planner):
     path = _job_file(root, job)
-    if not path.exists():
-        return None, [], ""
-    sql_text = path.read_text(encoding=TEXT_ENCODING)
+    if not path.is_file():
+        raise ValueError(f"[{job.get('job')}] task SQL does not exist: {path}")
     try:
         spec = planner.task_spec(
             job["job"],
             path,
             model_name=job.get("target") or job["job"],
         )
-        invocations = planner.plan_shadow_job(job, project_root=root)
-    except Exception as exc:
-        warnings.append(f"[{job.get('job')}] scope planning degraded: {exc}")
-        return None, [], sql_text
-    return spec, invocations, sql_text
+    except ExecutionConfigError:
+        asset = load_execution_task_asset(planner.project, path)
+        if asset.is_template:
+            raise
+        spec = None
+    invocations = materialize_frozen_job_invocations(
+        job,
+        planner=planner,
+        root=root,
+    )
+    sql_texts = []
+    for invocation in invocations:
+        sql_text = invocation.resolved_sql
+        if sql_text is None:
+            invocation_path = Path(invocation.sql_path)
+            if not invocation_path.is_file():
+                raise ValueError(
+                    f"[{job.get('job')}] invocation SQL does not exist: "
+                    f"{invocation_path}"
+                )
+            sql_text = invocation_path.read_text(encoding=TEXT_ENCODING)
+        sql_texts.append(terminate_batch_sql_item(sql_text))
+    return spec, invocations, "\n".join(sql_texts)
 
 
 def _mutation_outputs(sql_text: str, known_relations: set[str]) -> set[str]:
@@ -667,9 +690,7 @@ def compile_shadow_manifest(
 
     for index, job in enumerate(plan.get("jobs_to_run") or []):
         job_name = str(job.get("job") or "")
-        spec, invocations, sql_text = _job_runtime(
-            job, root, planner, warnings
-        )
+        spec, invocations, sql_text = _job_runtime(job, root, planner)
         if _references_reserved_marker(sql_text):
             blockers.append(
                 f"{job_name}: reserved relation "

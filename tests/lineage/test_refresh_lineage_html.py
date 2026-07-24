@@ -491,11 +491,6 @@ def _call_html_builder(builder, data):
 def test_html_builders_reject_unsupported_explicit_lineage_versions(
     monkeypatch, builder, version
 ):
-    monkeypatch.setattr(
-        refresh_html,
-        "iter_project_task_files",
-        lambda project: [],
-    )
     data = {
         "format_version": version,
         "tables": [],

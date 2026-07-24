@@ -102,6 +102,39 @@ def test_load_warehouse_config_preserves_qa_database_pool(tmp_path):
     ]
 
 
+def test_load_warehouse_config_preserves_task_template_profiles(tmp_path):
+    warehouse_dir = tmp_path / "warehouses" / "demo"
+    warehouse_dir.mkdir(parents=True)
+    warehouse_file = warehouse_dir / "warehouse.yaml"
+    warehouse_file.write_text(
+        """name: demo
+database: demo_dm
+task_templates:
+  version: 1
+  analysis:
+    startup:
+      etl_date: '2000-02-29'
+    project:
+      cdm_schema: demo_dm
+  bindings:
+    prod:
+      cdm_schema: demo_dm
+""",
+        encoding="utf-8",
+    )
+
+    loaded = config.load_warehouse_config(warehouse_file, tmp_path)
+
+    assert loaded["task_templates"] == {
+        "version": 1,
+        "analysis": {
+            "startup": {"etl_date": "2000-02-29"},
+            "project": {"cdm_schema": "demo_dm"},
+        },
+        "bindings": {"prod": {"cdm_schema": "demo_dm"}},
+    }
+
+
 @pytest.mark.parametrize(
     "value",
     ["[]", "[demo_dm_qa, '']", "demo_dm_qa"],

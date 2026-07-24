@@ -74,6 +74,7 @@ from dw_refactor_agent.refactor.verification_plan import (
     build_verification_plan,
 )
 from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
+from dw_refactor_agent.sql.task_template import renderer_semantics_digest
 
 NO_CHANGES_SCORE_REASON = (
     "No relevant file, lineage, DDL, or job changes were detected; scoped "
@@ -347,6 +348,18 @@ def _change_analysis_has_work(change_analysis: dict) -> bool:
             ("added_edges", "removed_edges", "changed_tables"),
         )
     )
+
+
+def _require_run_renderer_semantics(manifest: dict) -> str:
+    """Reject baselines created without the current renderer semantics."""
+    expected = manifest.get("task_renderer_semantics_digest")
+    actual = renderer_semantics_digest()
+    if expected != actual:
+        raise StalePlanError(
+            "stale_run: task renderer semantics differ from the frozen "
+            "baseline; create a new run with start"
+        )
+    return actual
 
 
 def _verification_plan_has_work(plan: dict) -> bool:
@@ -662,6 +675,7 @@ def _analyze(args) -> int:
     manifest = load_manifest(manifest_path)
     project = manifest["project"]
     repo_root = _root_from_manifest(manifest, manifest_path)
+    _require_run_renderer_semantics(manifest)
 
     with _project_root_context(repo_root) as repo_root:
         _invalidate_verification_outputs(manifest_path, manifest)
@@ -689,6 +703,8 @@ def _analyze(args) -> int:
             baseline_lineage,
             current_lineage,
             changed_files,
+            repo_root=repo_root,
+            base_ref=manifest.get("base_git", {}).get("head", "HEAD"),
         )
         _write_json(
             artifact_path(manifest_path, "change_analysis"),
@@ -823,6 +839,7 @@ def _replan(
     source_snapshot: dict,
 ) -> None:
     repo_root = _root_from_manifest(manifest, manifest_path)
+    _require_run_renderer_semantics(manifest)
     with _project_root_context(repo_root) as repo_root:
         _require_snapshot_workspace(
             source_snapshot,

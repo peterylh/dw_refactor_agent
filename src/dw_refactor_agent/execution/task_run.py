@@ -429,9 +429,10 @@ def _execute_invocation(
     executor = DirectSqlExecutor(mysql_cmd, db_name)
     executor.execute(invocation)
     value_text = ""
-    if invocation.params:
+    if invocation.public_session_params:
         value_text = " " + ", ".join(
-            f"{key}={value}" for key, value in invocation.params.items()
+            f"{key}={value}"
+            for key, value in invocation.public_session_params.items()
         )
     print(
         f"  [{invocation.job_name}] [OK] "
@@ -690,7 +691,7 @@ def main():
         DB_ENV_CONFIG[env]["port"],
         db_name,
     )
-    planner = ExecutionPlanner(project)
+    planner = ExecutionPlanner(project, db_env=env)
 
     if args.full_refresh:
         print(f"\n{'=' * 60}")

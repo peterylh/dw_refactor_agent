@@ -74,7 +74,9 @@ def _statement_ranges(sql_text: str) -> list[tuple[int, int]]:
     start = 0
     for token in Tokenizer(dialect="doris").tokenize(sql_text):
         if token.token_type == TokenType.SEMICOLON:
-            ranges.append((start, token.end + 1))
+            candidate = sql_text[start : token.end + 1]
+            if candidate.strip().strip(";").strip():
+                ranges.append((start, token.end + 1))
             start = token.end + 1
     if sql_text[start:].strip():
         ranges.append((start, len(sql_text)))

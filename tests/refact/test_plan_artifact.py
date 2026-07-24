@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import date
 
 import pytest
 
@@ -16,6 +17,9 @@ from dw_refactor_agent.refactor.plan_artifact import (
     write_verification_plan,
 )
 from dw_refactor_agent.refactor.session import write_manifest
+from dw_refactor_agent.refactor.verification_bindings import (
+    build_task_rendering_context,
+)
 
 _WORKSPACE_DIGEST = "sha256:" + "a" * 64
 
@@ -30,6 +34,9 @@ def _plan(ddl_by_table):
         "baseline_ddl": ddl_by_table,
         "ddl_changes": [],
         "jobs_to_run": [],
+        "task_rendering": build_task_rendering_context(
+            reference_date=date(2025, 1, 15)
+        ),
         "execution_graph": {
             "format_version": 1,
             "project": "demo",
@@ -165,6 +172,7 @@ def test_load_persisted_plan_detects_plan_body_edit(tmp_path):
         ("jobs_to_run", {}, "jobs_to_run.*list"),
         ("ddl_changes", {}, "ddl_changes.*list"),
         ("verification", [], "verification.*mapping"),
+        ("task_rendering", [], "task_rendering.*mapping"),
     ],
 )
 def test_load_persisted_plan_rejects_malformed_core_schema(
@@ -177,6 +185,25 @@ def test_load_persisted_plan_rejects_malformed_core_schema(
     plan_path.write_text(json.dumps(persisted), encoding="utf-8")
 
     with pytest.raises(ArtifactFormatError, match=expected):
+        load_persisted_verification_plan(plan_path)
+
+
+def test_load_persisted_plan_requires_frozen_job_invocations(tmp_path):
+    plan_path = tmp_path / "verification" / "plan.json"
+    plan = _plan({})
+    plan["jobs_to_run"] = [{"job": "Prepare_Sales"}]
+    plan["execution_graph"] = {
+        "format_version": 1,
+        "project": "demo",
+        "jobs": ["Prepare_Sales"],
+        "dependencies": {},
+    }
+    write_verification_plan(plan_path, plan)
+
+    with pytest.raises(
+        ArtifactFormatError,
+        match="verification_invocations.*non-empty list",
+    ):
         load_persisted_verification_plan(plan_path)
 
 

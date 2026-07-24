@@ -23,12 +23,10 @@ from dw_refactor_agent.config import (
     PROJECT_CONFIG,
     TEXT_ENCODING,
     determine_layer,
-    iter_project_task_files,
     layer_rank,
     lineage_data_path,
     lineage_html_path,
     lineage_job_html_path,
-    task_source_file,
 )
 from dw_refactor_agent.lineage.contract import validate_lineage_v2
 from dw_refactor_agent.lineage.identifiers import (
@@ -37,6 +35,10 @@ from dw_refactor_agent.lineage.identifiers import (
     identifier_match_key,
     split_column_ref,
     table_identity_match_key,
+)
+from dw_refactor_agent.sql.task_analysis import (
+    resolve_project_tasks_analysis,
+    resolve_task_path_analysis,
 )
 
 LINEAGE_DIR = Path(__file__).parent
@@ -253,20 +255,27 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
     task_entries = []
     if tasks_dir:
         explicit_task_files = iter_task_sql_files(Path(tasks_dir))
+        resolved_tasks = resolve_project_tasks_analysis(project)
         task_entries = [
             (
                 task_path,
                 task_path.relative_to(tasks_dir).as_posix(),
+                resolve_task_path_analysis(
+                    project,
+                    task_path,
+                    source_file=task_path.relative_to(tasks_dir).as_posix(),
+                    resolved_tasks=resolved_tasks,
+                ).sql,
             )
             for task_path in explicit_task_files
         ]
     if not task_entries:
         task_entries = [
-            (task_path, task_source_file(project, task_path))
-            for task_path in iter_project_task_files(project)
+            (asset.sql_path, asset.source_file, analysis_sql.sql)
+            for asset, analysis_sql in resolve_project_tasks_analysis(project)
         ]
 
-    for f, fname in task_entries:
+    for f, fname, task_sql in task_entries:
         job_id = str(Path(fname).with_suffix(""))
         edges = file_edges.get(fname, [])
 
@@ -280,9 +289,7 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
             if target_table:
                 targets.add(_strip_db(target_table, current_db))
 
-        for stmt in sqlglot.parse(
-            f.read_text(encoding=TEXT_ENCODING), dialect="doris"
-        ):
+        for stmt in sqlglot.parse(task_sql, dialect="doris"):
             if stmt is None:
                 continue
             if isinstance(stmt, (exp.Insert, exp.Create, exp.Update)):

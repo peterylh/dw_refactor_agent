@@ -37,6 +37,11 @@ from dw_refactor_agent.lineage.schedule_inference import (
     writers_by_table,
 )
 from dw_refactor_agent.refactor.qa_pool import configured_qa_pool
+from dw_refactor_agent.refactor.verification_bindings import (
+    build_task_rendering_context,
+    freeze_job_invocations,
+    verification_planner,
+)
 from dw_refactor_agent.refactor.verification_checks import (
     FULL_TABLE_SCOPE,
     TIME_SLICE_SCOPE,
@@ -527,6 +532,19 @@ def build_verification_plan(
         metadata_errors,
         lineage_data,
     )
+    task_rendering = build_task_rendering_context()
+    rendering_root = _project_repo_root(repo_root).resolve()
+    rendering_planner = verification_planner(
+        project,
+        rendering_root,
+        task_rendering,
+    )
+    for job in jobs_to_run:
+        job["verification_invocations"] = freeze_job_invocations(
+            job,
+            planner=rendering_planner,
+            root=rendering_root,
+        )
 
     checks = _verification_checks(
         project,
@@ -581,6 +599,7 @@ def build_verification_plan(
         "baseline_ddl": dict(sorted(baseline_ddl.items())),
         "ddl_changes": ddl_changes,
         "jobs_to_run": jobs_to_run,
+        "task_rendering": task_rendering,
         "execution_graph": execution_graph,
         "verification": verification,
     }

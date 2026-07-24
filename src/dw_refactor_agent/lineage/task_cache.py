@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dw_refactor_agent.config import TEXT_ENCODING
 
-TASK_CACHE_FORMAT_VERSION = 3
+TASK_CACHE_FORMAT_VERSION = 4
 TASK_FACT_FIELDS = (
     "input_tables",
     "output_tables",
@@ -27,6 +27,7 @@ class TaskCacheMetadata:
     schema_slice_hash: str
     extractor_hash: str
     project_config: dict
+    analysis_identity: dict = field(default_factory=dict)
 
 
 def sha256_text(text: str) -> str:
@@ -68,6 +69,7 @@ def task_cache_key(
         "schema_slice_hash": metadata.schema_slice_hash,
         "extractor_hash": metadata.extractor_hash,
         "project_config": cache_project_config(metadata.project_config),
+        "analysis_identity": metadata.analysis_identity,
     }
     return stable_json_hash(payload)
 
@@ -129,6 +131,7 @@ def cache_entry_from_result(result: dict, cache_key: str) -> dict:
         "schema_slice_hash",
         "extractor_hash",
         "project_config",
+        "analysis_identity",
     ):
         if key in result:
             entry[key] = result[key]

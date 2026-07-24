@@ -12,12 +12,14 @@ from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     parse_create_table,
 )
 from dw_refactor_agent.ddl_deriver.schema_ids import SchemaIdentityError
-from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.schedule_graph import ScheduleGraph
 from dw_refactor_agent.refactor.semantic_mode import SemanticResolution
 from dw_refactor_agent.refactor.shadow_manifest import (
     compile_shadow_manifest,
     manifest_summary,
+)
+from dw_refactor_agent.refactor.verification_bindings import (
+    verification_planner,
 )
 from dw_refactor_agent.refactor.verification_plan import (
     build_verification_plan,
@@ -421,6 +423,15 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
             "file": "demo/mid/tasks/dws_order.sql",
             "layer": "DWS",
             "target": "dws_order",
+            "verification_invocations": [
+                {
+                    "file": "demo/mid/tasks/dws_order.sql",
+                    "full_refresh": False,
+                    "strategy": "legacy_deferred",
+                    "is_template": False,
+                    "session_params": {},
+                }
+            ],
         }
     ]
     assert "checks" not in plan
@@ -1372,7 +1383,11 @@ execution:
         compile_shadow_manifest(
             plan,
             tmp_path,
-            ExecutionPlanner("demo", project_root=tmp_path),
+            verification_planner(
+                "demo",
+                tmp_path,
+                plan["task_rendering"],
+            ),
         )
     )
     assert summary["jobs"]["dws_category_sales_daily"]["routes"]["data_read"][

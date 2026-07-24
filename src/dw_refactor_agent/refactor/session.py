@@ -15,6 +15,7 @@ from dw_refactor_agent.refactor.artifact_contract import (
     require_format_version,
     sha256_json,
 )
+from dw_refactor_agent.sql.task_template import renderer_semantics_digest
 
 
 def _refactor_runs_root(root: Path, project: str) -> Path:
@@ -81,6 +82,7 @@ def create_run_manifest(
         "root": str(root),
         "created_at": now.isoformat(),
         "base_git": git_info or {},
+        "task_renderer_semantics_digest": renderer_semantics_digest(),
         "artifacts": _artifact_paths(),
     }
     manifest_path = run_root / "manifest.json"

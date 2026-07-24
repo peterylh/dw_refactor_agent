@@ -5,15 +5,22 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import yaml
+
 from dw_refactor_agent.config import (
     BUSINESS_SEMANTICS_FILE_NAMES,
     PROJECT_CONFIG,
+    TEXT_ENCODING,
 )
 from dw_refactor_agent.lineage.asset_graph import build_asset_table_graph
 from dw_refactor_agent.lineage.identifiers import (
     identifier_match_key,
     table_identity_match_key,
 )
+from dw_refactor_agent.sql.task_analysis import task_analysis_profile
+from dw_refactor_agent.sql.task_execution import task_execution_profile
+from dw_refactor_agent.sql.task_template import load_task_definition
+from dw_refactor_agent.sql.task_template.scoped_bindings import scope_bindings
 
 PROJECT_CONFIG_GLOBAL_DIMENSIONS = [
     "asset_completeness",
@@ -24,6 +31,8 @@ PROJECT_CONFIG_GLOBAL_DIMENSIONS = [
     "naming",
     "reuse",
 ]
+_WAREHOUSE_FILE = "warehouse.yaml"
+_VERIFICATION_BINDING_ENVIRONMENT = "prod"
 
 
 def _normalize_path(path: str) -> str:
@@ -120,7 +129,9 @@ def classify_changed_assets(files: list[str], project_dir: str) -> dict:
         parts = rel_path.split("/")
         if path.endswith(".sql") and _is_asset_path(parts, "ddl"):
             ddl_tables.add(Path(path).stem)
-        elif path.endswith(".sql") and _is_asset_path(parts, "tasks"):
+        elif path.endswith((".sql", ".yaml", ".yml")) and _is_asset_path(
+            parts, "tasks"
+        ):
             task_jobs.add(_task_job_name(path))
         elif path.endswith((".yaml", ".yml")) and (
             _is_asset_path(parts, "models")
@@ -251,6 +262,196 @@ def _changed_job_output_tables(
     return set(output_tables.values())
 
 
+def _warehouse_task_templates(
+    repo_root: Path,
+    relative_path: str,
+    *,
+    ref: str | None = None,
+) -> dict:
+    if ref is None:
+        warehouse_path = Path(repo_root) / relative_path
+        content = (
+            warehouse_path.read_text(encoding=TEXT_ENCODING)
+            if warehouse_path.is_file()
+            else ""
+        )
+    else:
+        result = subprocess.run(
+            ["git", "show", f"{ref}:{relative_path}"],
+            cwd=str(repo_root),
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding=TEXT_ENCODING,
+        )
+        content = result.stdout if result.returncode == 0 else ""
+    try:
+        raw = yaml.safe_load(content) if content else {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid warehouse.yaml: {relative_path}") from exc
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"warehouse.yaml must be a mapping: {relative_path}")
+    task_templates = raw.get("task_templates") or {}
+    if not isinstance(task_templates, dict):
+        raise ValueError(
+            f"warehouse.yaml task_templates must be a mapping: {relative_path}"
+        )
+    return {"task_templates": task_templates}
+
+
+def _relevant_template_parameters(definition) -> set[str]:
+    parameters = definition.contract.parameters_by_name
+    relevant = set(definition.placeholder_names)
+    relevant.update(definition.contract.usage.referenced_props())
+    pending = list(relevant)
+    while pending:
+        prop = pending.pop()
+        parameter = parameters.get(prop)
+        if parameter is None:
+            continue
+        for dependency in parameter.dependencies():
+            if dependency in relevant:
+                continue
+            relevant.add(dependency)
+            pending.append(dependency)
+    return relevant
+
+
+def _effective_template_bindings(definition, project_config: dict) -> dict:
+    relevant = _relevant_template_parameters(definition)
+    analysis = task_analysis_profile(project_config)
+    verification = task_execution_profile(
+        project_config,
+        _VERIFICATION_BINDING_ENVIRONMENT,
+    )
+
+    def selected_scope(definitions, values, source_prefix):
+        scoped = scope_bindings(
+            definitions,
+            values,
+            source_prefix=source_prefix,
+        )
+        return {
+            prop: scoped[prop]
+            for prop in sorted(relevant.intersection(scoped))
+        }
+
+    return {
+        "analysis": {
+            "startup": selected_scope(
+                definition.contract.startup_params,
+                analysis.startup,
+                "invocation",
+            ),
+            "project": selected_scope(
+                definition.contract.project_params,
+                analysis.project,
+                "project",
+            ),
+            "overrides": {
+                prop: analysis.overrides[prop]
+                for prop in sorted(relevant.intersection(analysis.overrides))
+            },
+        },
+        "verification": {
+            "project": selected_scope(
+                definition.contract.project_params,
+                verification.project,
+                "project",
+            ),
+            "overrides": {
+                prop: verification.overrides[prop]
+                for prop in sorted(
+                    relevant.intersection(verification.overrides)
+                )
+            },
+        },
+    }
+
+
+def _current_template_definitions(
+    project: str,
+    repo_root: Path,
+) -> list[tuple[str, object]]:
+    project_cfg = _project_config(project) or {}
+    project_dir = str(project_cfg.get("dir") or "").strip().rstrip("/")
+    if not project_dir:
+        return []
+    project_root = Path(repo_root) / project_dir
+    task_dirs = [
+        path
+        for path in sorted((project_root / "ods" / "tasks").glob("*/*"))
+        if path.is_dir()
+    ]
+    task_dirs.extend(project_root / role / "tasks" for role in ("mid", "ads"))
+    definitions = []
+    for task_dir in task_dirs:
+        task_paths = sorted(task_dir.glob("*.sql"))
+        task_paths.extend(sorted((task_dir / "full_refresh").glob("*.sql")))
+        for sql_path in task_paths:
+            contract_paths = [
+                path
+                for path in (
+                    sql_path.with_suffix(".yaml"),
+                    sql_path.with_suffix(".yml"),
+                )
+                if path.is_file()
+            ]
+            if not contract_paths:
+                continue
+            if len(contract_paths) > 1:
+                raise ValueError(
+                    f"task SQL has multiple YAML contracts: {sql_path}"
+                )
+            definitions.append(
+                (
+                    _task_job_name(sql_path.as_posix()),
+                    load_task_definition(sql_path, contract_paths[0]),
+                )
+            )
+    return definitions
+
+
+def _template_config_changed_jobs(
+    project: str,
+    changed_assets: dict,
+    *,
+    repo_root: Path | None,
+    base_ref: str | None,
+) -> set[str]:
+    if repo_root is None or not base_ref:
+        return set()
+    project_cfg = _project_config(project) or {}
+    project_dir = str(project_cfg.get("dir") or "").strip().rstrip("/")
+    relative_path = f"{project_dir}/{_WAREHOUSE_FILE}"
+    if not project_dir or relative_path not in set(
+        changed_assets.get("config_files") or []
+    ):
+        return set()
+
+    baseline = _warehouse_task_templates(
+        Path(repo_root),
+        relative_path,
+        ref=base_ref,
+    )
+    current = _warehouse_task_templates(Path(repo_root), relative_path)
+    if baseline == current:
+        return set()
+
+    changed_jobs = set()
+    for job_name, definition in _current_template_definitions(
+        project,
+        Path(repo_root),
+    ):
+        if _effective_template_bindings(
+            definition, baseline
+        ) != _effective_template_bindings(definition, current):
+            changed_jobs.add(job_name)
+    return changed_jobs
+
+
 def _display_values(
     project: str,
     table_keys: set[tuple],
@@ -279,8 +480,20 @@ def build_change_analysis(
     baseline_lineage: dict,
     current_lineage: dict,
     changed_files: list[str],
+    *,
+    repo_root: Path | None = None,
+    base_ref: str | None = None,
 ) -> dict:
     changed_assets = classify_changed_assets(changed_files, project)
+    template_config_jobs = _template_config_changed_jobs(
+        project,
+        changed_assets,
+        repo_root=repo_root,
+        base_ref=base_ref,
+    )
+    changed_assets["task_jobs"] = sorted(
+        set(changed_assets["task_jobs"]) | template_config_jobs
+    )
     direct_table_names = set(changed_assets["ddl_tables"])
     direct_table_names.update(changed_assets["model_tables"])
 

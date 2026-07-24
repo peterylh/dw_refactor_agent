@@ -4,7 +4,8 @@ import json
 import threading
 import time
 from copy import deepcopy
-from datetime import datetime
+from datetime import date, datetime
+from pathlib import Path
 
 import pytest
 import sqlglot
@@ -33,6 +34,11 @@ from dw_refactor_agent.refactor.shadow_run import (
 )
 from dw_refactor_agent.refactor.shadow_run import (
     execute_shadow_plan as _execute_shadow_plan,
+)
+from dw_refactor_agent.refactor.verification_bindings import (
+    build_task_rendering_context,
+    freeze_job_invocations,
+    verification_planner,
 )
 from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 
@@ -176,6 +182,7 @@ def execute_shadow_plan(plan, *, root, dry_run=False, **kwargs):
             "dependencies": dependencies,
         },
     )
+    _freeze_test_task_bindings(plan, root)
     return _execute_shadow_plan(
         plan,
         root=root,
@@ -183,6 +190,37 @@ def execute_shadow_plan(plan, *, root, dry_run=False, **kwargs):
         claimed_ownership=(None if dry_run else _claimed_ownership(plan)),
         **kwargs,
     )
+
+
+def _freeze_test_task_bindings(plan, root):
+    context = plan.setdefault(
+        "task_rendering",
+        build_task_rendering_context(reference_date=date(2025, 1, 15)),
+    )
+    planner = verification_planner(plan["project"], root, context)
+    for job in plan.get("jobs_to_run") or []:
+        raw_path = Path(str(job.get("file") or ""))
+        task_path = (
+            raw_path if raw_path.is_absolute() else Path(root) / raw_path
+        )
+        if not task_path.is_file():
+            job.setdefault(
+                "verification_invocations",
+                [
+                    {
+                        "file": str(job.get("file") or ""),
+                        "full_refresh": False,
+                        "strategy": "legacy_deferred",
+                        "is_template": False,
+                        "session_params": {},
+                    }
+                ],
+            )
+            continue
+        job.setdefault(
+            "verification_invocations",
+            freeze_job_invocations(job, planner=planner, root=root),
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -297,6 +335,7 @@ def _write_fresh_plan_bundle(plan_path, plan):
     )
     prepared.setdefault("run_id", manifest["run_id"])
     prepared.setdefault("qa_database_pool", [prepared["qa_db"]])
+    _freeze_test_task_bindings(prepared, root)
     snapshot = deepcopy(prepared.get("analysis_snapshot") or {})
     snapshot["workspace_fingerprint"] = workspace_fingerprint(
         root, plan["project"]
@@ -766,6 +805,15 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
         "error": "insert failed",
         "execution_values": ["2025-01-15"],
         "invocation_count": 1,
+        "rendered_bindings": [
+            {
+                "file": ("warehouses/shop/mid/tasks/dwd_order_detail.sql"),
+                "full_refresh": False,
+                "strategy": "replay_slices",
+                "is_template": False,
+                "session_params": {"etl_date": "2025-01-15"},
+            }
+        ],
     }
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
@@ -871,14 +919,15 @@ def test_execute_shadow_plan_fails_when_job_file_is_missing(
     result = execute_shadow_plan(plan, root=tmp_path)
 
     assert result["status"] == "failed"
-    assert result["summary"]["failed_job_count"] == 1
-    phase_names = [phase["name"] for phase in result["phases"]]
-    assert "compare" not in phase_names
-    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
-    assert phase_by_name["run_jobs"]["status"] == "failed"
-    job_result = phase_by_name["run_jobs"]["jobs"][0]
-    assert job_result["status"] == "failed"
-    assert "文件不存在" in job_result["error"]
+    assert result["summary"]["failed_job_count"] == 0
+    assert [phase["name"] for phase in result["phases"]] == [
+        "compile_shadow_manifest"
+    ]
+    phase = result["phases"][0]
+    assert phase["status"] == "failed"
+    assert any(
+        "task SQL does not exist" in blocker for blocker in phase["blockers"]
+    )
 
 
 def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
@@ -1040,6 +1089,7 @@ def test_execute_shadow_plan_validates_ownership_before_database_writes(
             AssertionError("ownership failure must precede database writes")
         ),
     )
+    _freeze_test_task_bindings(plan, tmp_path)
 
     result = _execute_shadow_plan(
         plan,
