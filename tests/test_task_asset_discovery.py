@@ -205,6 +205,33 @@ def test_full_refresh_companion_does_not_inherit_main_task_contract(
     assert str(full_path) in str(raised.value)
 
 
+def test_legacy_same_stem_full_refresh_pair_preserves_lookup_semantics(
+    monkeypatch,
+    tmp_path,
+):
+    project_dir = _configure_project(monkeypatch, tmp_path)
+    tasks_dir = project_dir / "mid" / "tasks"
+    primary = _write(tasks_dir / "orders.sql", "SELECT 1;\n")
+    full_refresh = _write(
+        tasks_dir / "full_refresh" / "orders.sql",
+        "SELECT 2;\n",
+    )
+
+    tasks = config.discover_project_tasks("demo")
+
+    assert [item.sql_path for item in tasks] == [primary, full_refresh]
+    assert [item.source_file for item in tasks] == [
+        "orders.sql",
+        "full_refresh/orders.sql",
+    ]
+    assert [item.is_full_refresh for item in tasks] == [False, True]
+    assert config.task_path_for_job("demo", "orders") == primary
+    assert (
+        config.task_path_for_source_file("demo", "full_refresh/orders.sql")
+        == full_refresh
+    )
+
+
 @pytest.mark.parametrize(
     ("first_role", "first_name", "second_role", "second_name", "code"),
     [

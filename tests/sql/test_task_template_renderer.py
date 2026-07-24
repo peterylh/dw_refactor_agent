@@ -1,9 +1,12 @@
 from copy import deepcopy
+from datetime import date
 from decimal import localcontext
 
 import pytest
+import yaml
 
 from dw_refactor_agent.sql.task_template import (
+    RENDERER_VERSION,
     RenderBindings,
     RenderMode,
     TemplateRenderError,
@@ -11,6 +14,15 @@ from dw_refactor_agent.sql.task_template import (
     render_task,
     renderer_semantics_digest,
 )
+from dw_refactor_agent.sql.task_template.contract import CONTRACT_VERSION
+from dw_refactor_agent.sql.task_template.derivation import (
+    DERIVATION_OPERATIONS,
+)
+from dw_refactor_agent.sql.task_template.loader import (
+    canonical_json_bytes,
+    sha256_bytes,
+)
+from dw_refactor_agent.sql.task_template.types import ParameterType
 
 
 def _render_contract():
@@ -97,7 +109,6 @@ def _render_contract():
                 "type": "VARCHAR",
                 "value": "O'Reilly\\bank",
                 "overrideable": True,
-                "sensitive": True,
             },
             {
                 "prop": "row_limit",
@@ -125,6 +136,26 @@ def _render_contract():
             ]
         },
     }
+
+
+def test_renderer_semantics_version_rejects_v1_identity():
+    old_v1_digest = sha256_bytes(
+        canonical_json_bytes(
+            {
+                "renderer_version": "task-template-renderer-v1",
+                "contract_version": CONTRACT_VERSION,
+                "parameter_types": sorted(
+                    item.value for item in ParameterType
+                ),
+                "derivation_operations": sorted(DERIVATION_OPERATIONS),
+                "literal_policy": "renderer_emits_complete_sql_tokens",
+                "identifier_policy": "ascii_segments_backtick_quoted",
+            }
+        )
+    )
+
+    assert RENDERER_VERSION == "task-template-renderer-v2"
+    assert renderer_semantics_digest() != old_v1_digest
 
 
 def _render_sql():
@@ -170,7 +201,7 @@ WHERE data_dt BETWEEN '20240228' AND '20240229'
 LIMIT 100;
 """
     )
-    assert result.public_bindings["org_code"] == "<redacted>"
+    assert result.public_bindings["org_code"] == "O'Reilly\\bank"
     assert result.public_bindings["run_table"] == "tmp_run_20240229"
     assert result.normalized_summary()["config_digest"].startswith("sha256:")
 
@@ -226,6 +257,165 @@ def test_date_derivation_matrix(operation, amount, etl_date, expected):
     assert rendered.sql == f"SELECT '{expected}';"
 
 
+@pytest.mark.parametrize(
+    ("operation", "amount", "expected"),
+    [
+        ("add_days", -1, "2024-02-28 12:34:56"),
+        ("add_months", -1, "2024-01-29 12:34:56"),
+        ("add_years", -1, "2023-02-28 12:34:56"),
+        ("month_start", None, "2024-02-01 12:34:56"),
+        ("month_end", None, "2024-02-29 12:34:56"),
+        ("year_start", None, "2024-01-01 12:34:56"),
+        ("year_end", None, "2024-12-31 12:34:56"),
+        ("previous_year_end", None, "2023-12-31 12:34:56"),
+    ],
+)
+def test_timestamp_derivations_preserve_time(operation, amount, expected):
+    derive = {"from": "run_ts", "operation": operation}
+    if amount is not None:
+        derive["amount"] = amount
+    definition = build_task_definition(
+        "SELECT ${derived_ts};",
+        {
+            "version": 1,
+            "strict": True,
+            "startup_params": [
+                {
+                    "prop": "run_ts",
+                    "type": "TIMESTAMP",
+                    "source": "invocation.run_ts",
+                    "required": True,
+                }
+            ],
+            "local_params": [
+                {
+                    "prop": "derived_ts",
+                    "direct": "IN",
+                    "type": "TIMESTAMP",
+                    "value": {"derive": derive},
+                }
+            ],
+        },
+    )
+
+    rendered = render_task(
+        definition,
+        mode="analysis",
+        bindings=RenderBindings(startup={"run_ts": "2024-02-29 12:34:56"}),
+    )
+
+    assert rendered.sql == f"SELECT '{expected}';"
+
+
+def test_timestamp_format_derivation_preserves_time():
+    definition = build_task_definition(
+        "SELECT ${run_time};",
+        {
+            "version": 1,
+            "strict": True,
+            "startup_params": [
+                {
+                    "prop": "run_ts",
+                    "type": "TIMESTAMP",
+                    "source": "invocation.run_ts",
+                    "required": True,
+                }
+            ],
+            "local_params": [
+                {
+                    "prop": "run_time",
+                    "direct": "IN",
+                    "type": "VARCHAR",
+                    "value": {
+                        "derive": {
+                            "from": "run_ts",
+                            "operation": "format_date",
+                            "format": "HH:mm:ss",
+                        }
+                    },
+                }
+            ],
+        },
+    )
+
+    rendered = render_task(
+        definition,
+        mode="analysis",
+        bindings=RenderBindings(startup={"run_ts": "2024-02-29 12:34:56"}),
+    )
+
+    assert rendered.sql == "SELECT '12:34:56';"
+
+
+def test_timestamp_derivation_can_explicitly_project_to_date():
+    definition = build_task_definition(
+        "SELECT ${derived_date};",
+        {
+            "version": 1,
+            "strict": True,
+            "startup_params": [
+                {
+                    "prop": "run_ts",
+                    "type": "TIMESTAMP",
+                    "source": "invocation.run_ts",
+                    "required": True,
+                }
+            ],
+            "local_params": [
+                {
+                    "prop": "derived_date",
+                    "direct": "IN",
+                    "type": "DATE",
+                    "value": {
+                        "derive": {
+                            "from": "run_ts",
+                            "operation": "add_days",
+                            "amount": 1,
+                        }
+                    },
+                }
+            ],
+        },
+    )
+
+    rendered = render_task(
+        definition,
+        mode="analysis",
+        bindings=RenderBindings(startup={"run_ts": "2024-02-29 12:34:56"}),
+    )
+
+    assert rendered.sql == "SELECT '2024-03-01';"
+
+
+def test_timestamp_project_binding_rejects_yaml_date_scalar():
+    definition = build_task_definition(
+        "SELECT ${run_ts};",
+        {
+            "version": 1,
+            "strict": True,
+            "project_params": [
+                {
+                    "prop": "run_ts",
+                    "type": "TIMESTAMP",
+                    "source": "project.run_ts",
+                    "required": True,
+                }
+            ],
+        },
+    )
+    project = yaml.safe_load("run_ts: 2025-03-01\n")
+
+    assert isinstance(project["run_ts"], date)
+    with pytest.raises(TemplateRenderError) as raised:
+        render_task(
+            definition,
+            mode="execution",
+            bindings=RenderBindings(project=project),
+        )
+
+    assert raised.value.code == "template.render.invalid_value"
+
+
 def test_analysis_render_is_independent_of_working_directory_timezone_and_now(
     tmp_path,
     monkeypatch,
@@ -267,7 +457,7 @@ def test_modes_share_derivation_graph_but_bind_explicit_root_values():
     assert execution.render_digest != analysis.render_digest
 
 
-def test_only_declared_overrides_are_accepted_and_sensitive_values_stay_hidden():
+def test_only_declared_overrides_are_accepted():
     definition = _definition()
     first = render_task(
         definition,
@@ -280,8 +470,7 @@ def test_only_declared_overrides_are_accepted_and_sensitive_values_stay_hidden()
         bindings=_bindings(org_code="secret-b"),
     )
 
-    assert first.public_bindings["org_code"] == "<redacted>"
-    assert "secret-a" not in repr(first.normalized_summary())
+    assert first.public_bindings["org_code"] == "secret-a"
     assert first.binding_digest != second.binding_digest
     assert "org_code = 'secret-a'" in first.sql
 
@@ -517,112 +706,6 @@ def test_binding_alias_conflicts_and_identifier_overrides_fail_closed():
             bindings=_bindings(source_table="other.table"),
         )
     assert raised.value.code == "template.render.forbidden_override"
-
-
-def test_sensitive_taint_propagates_and_public_surfaces_redact_constants():
-    secret = "do-not-publish"
-    alias_definition = build_task_definition(
-        "SELECT ${secret_alias};",
-        {
-            "version": 1,
-            "strict": True,
-            "startup_params": [
-                {
-                    "prop": "secret_root",
-                    "type": "VARCHAR",
-                    "source": "invocation.secret_root",
-                    "required": True,
-                    "sensitive": True,
-                }
-            ],
-            "local_params": [
-                {
-                    "prop": "secret_alias",
-                    "direct": "IN",
-                    "type": "VARCHAR",
-                    "value": "${secret_root}",
-                }
-            ],
-        },
-    )
-    literal_definition = build_task_definition(
-        "SELECT ${secret_literal};",
-        {
-            "version": 1,
-            "strict": True,
-            "local_params": [
-                {
-                    "prop": "secret_literal",
-                    "direct": "IN",
-                    "type": "VARCHAR",
-                    "value": secret,
-                    "sensitive": True,
-                }
-            ],
-        },
-    )
-    default_definition = build_task_definition(
-        "SELECT ${secret_default};",
-        {
-            "version": 1,
-            "strict": True,
-            "startup_params": [
-                {
-                    "prop": "secret_default",
-                    "type": "VARCHAR",
-                    "source": "invocation.secret_default",
-                    "required": False,
-                    "default": secret,
-                    "sensitive": True,
-                }
-            ],
-        },
-    )
-
-    rendered = render_task(
-        alias_definition,
-        mode="execution",
-        bindings=RenderBindings(startup={"secret_root": secret}),
-    )
-
-    assert rendered.public_bindings == {
-        "secret_alias": "<redacted>",
-        "secret_root": "<redacted>",
-    }
-    assert secret not in repr(literal_definition.normalized_summary())
-    assert secret not in repr(default_definition.normalized_summary())
-    assert "<redacted>" in repr(literal_definition.normalized_summary())
-    assert "<redacted>" in repr(default_definition.normalized_summary())
-
-
-def test_invalid_sensitive_bindings_are_not_echoed_in_errors():
-    raw_secret = "private-not-an-integer"
-    definition = build_task_definition(
-        "SELECT ${secret_number};",
-        {
-            "version": 1,
-            "strict": True,
-            "startup_params": [
-                {
-                    "prop": "secret_number",
-                    "type": "INTEGER",
-                    "source": "invocation.secret_number",
-                    "required": True,
-                    "sensitive": True,
-                }
-            ],
-        },
-    )
-
-    with pytest.raises(TemplateRenderError) as raised:
-        render_task(
-            definition,
-            mode="execution",
-            bindings=RenderBindings(startup={"secret_number": raw_secret}),
-        )
-
-    assert raised.value.code == "template.render.invalid_value"
-    assert raw_secret not in str(raised.value)
 
 
 def test_empty_list_override_fails_before_emitting_invalid_in_clause():

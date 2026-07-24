@@ -26,8 +26,7 @@ from .types import (
     render_sql_token,
 )
 
-RENDERER_VERSION = "task-template-renderer-v1"
-_REDACTED = "<redacted>"
+RENDERER_VERSION = "task-template-renderer-v2"
 _MISSING = object()
 
 
@@ -100,6 +99,8 @@ def renderer_semantics_digest() -> str:
         "derivation_operations": sorted(DERIVATION_OPERATIONS),
         "literal_policy": "renderer_emits_complete_sql_tokens",
         "identifier_policy": "ascii_segments_backtick_quoted",
+        "temporal_derivation_policy": "preserve_timestamp_time_components",
+        "public_binding_policy": "all_bindings_visible",
     }
     return sha256_bytes(canonical_json_bytes(semantics))
 
@@ -149,21 +150,12 @@ def _coerce_definition(
     definition: ParameterDefinition,
     raw: object,
 ) -> object:
-    try:
-        return coerce_value(
-            definition.data_type,
-            raw,
-            render=definition.render,
-            prop=definition.prop,
-        )
-    except TemplateRenderError as exc:
-        if not definition.sensitive:
-            raise
-        raise TemplateRenderError(
-            f"parameter {definition.prop!r} has an invalid sensitive value",
-            code=exc.code,
-            path=exc.path,
-        ) from None
+    return coerce_value(
+        definition.data_type,
+        raw,
+        render=definition.render,
+        prop=definition.prop,
+    )
 
 
 def _validate_overrides(
@@ -300,21 +292,12 @@ def _render_sql(
     tokens = {}
     for prop in definition.placeholder_names:
         item = definition.contract.parameters_by_name[prop]
-        try:
-            tokens[prop] = render_sql_token(
-                item.data_type,
-                values[prop],
-                render=item.render,
-                prop=prop,
-            )
-        except TemplateRenderError as exc:
-            if not item.sensitive:
-                raise
-            raise TemplateRenderError(
-                f"parameter {prop!r} could not be rendered safely",
-                code=exc.code,
-                path=exc.path,
-            ) from None
+        tokens[prop] = render_sql_token(
+            item.data_type,
+            values[prop],
+            render=item.render,
+            prop=prop,
+        )
     pieces = []
     cursor = 0
     for occurrence in definition.placeholders:
@@ -344,14 +327,7 @@ def render_task(
             {"mode": render_mode.value, "values": normalized_values}
         )
     )
-    public_bindings = {
-        prop: (
-            _REDACTED
-            if definition.contract.parameters_by_name[prop].sensitive
-            else normalized_values[prop]
-        )
-        for prop in sorted(normalized_values)
-    }
+    public_bindings = dict(normalized_values)
     render_digest = sha256_bytes(
         canonical_json_bytes(
             {

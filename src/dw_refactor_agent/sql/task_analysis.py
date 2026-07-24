@@ -17,6 +17,7 @@ from .task_template import (
     renderer_semantics_digest,
 )
 from .task_template.loader import canonical_json_bytes, sha256_bytes
+from .task_template.scoped_bindings import scope_bindings
 from .task_template.types import normalize_value
 
 ANALYSIS_PROFILE_VERSION = 1
@@ -143,15 +144,6 @@ def task_analysis_profile(
     )
 
 
-def _scope_bindings(definitions, values: Mapping[str, object]) -> dict:
-    allowed = set()
-    for definition in definitions:
-        allowed.add(definition.prop)
-        if definition.source:
-            allowed.add(definition.source)
-    return {key: value for key, value in values.items() if key in allowed}
-
-
 def resolve_task_analysis_sql(
     asset: ProjectTaskAsset,
     project_config: Mapping[str, object],
@@ -180,13 +172,15 @@ def resolve_task_analysis_sql(
         definition,
         mode=RenderMode.ANALYSIS,
         bindings=RenderBindings(
-            startup=_scope_bindings(
+            startup=scope_bindings(
                 definition.contract.startup_params,
                 actual_profile.startup,
+                source_prefix="invocation",
             ),
-            project=_scope_bindings(
+            project=scope_bindings(
                 definition.contract.project_params,
                 actual_profile.project,
+                source_prefix="project",
             ),
             overrides={
                 key: value

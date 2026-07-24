@@ -79,7 +79,6 @@ def test_contract_normalizes_dolphin_style_parameters_and_variable_usage():
         "prop": "etl_date",
         "type": "DATE",
         "overrideable": False,
-        "sensitive": False,
         "source": "invocation.etl_date",
         "required": True,
     }
@@ -271,21 +270,23 @@ def test_dynamic_relation_usage_requires_identifier_type():
 
 
 @pytest.mark.parametrize(
-    "mutate",
+    "parameter_path",
     [
-        lambda raw: raw["project_params"][0].update({"sensitive": True}),
-        lambda raw: raw["startup_params"][0].update({"sensitive": True}),
+        ("startup_params", 0),
+        ("local_params", 0),
     ],
 )
-def test_contract_rejects_direct_or_derived_sensitive_identifiers(mutate):
+def test_contract_rejects_removed_sensitive_field(parameter_path):
     raw = deepcopy(_valid_contract())
-    mutate(raw)
+    section, index = parameter_path
+    raw[section][index]["sensitive"] = True
 
     with pytest.raises(ContractValidationError) as raised:
         parse_contract(raw)
 
-    assert raised.value.code == "template.contract.sensitive_identifier"
-    assert raised.value.path[-1] == "sensitive"
+    assert raised.value.code == "template.contract.unknown_field"
+    assert raised.value.path == parameter_path
+    assert "sensitive" in str(raised.value)
 
 
 def test_sql_scanner_respects_backslash_escaped_double_quotes():
@@ -408,7 +409,6 @@ def test_contract_prevalidates_static_and_default_values_without_echoing_them(
                 "direct": "IN",
                 "type": "INTEGER",
                 "value": secret,
-                "sensitive": True,
             }
         ]
     else:
@@ -419,7 +419,6 @@ def test_contract_prevalidates_static_and_default_values_without_echoing_them(
                 "source": "invocation.secret_value",
                 "required": False,
                 "default": secret,
-                "sensitive": True,
             }
         ]
 
@@ -485,7 +484,6 @@ def test_contract_prevalidates_final_sql_tokens_without_echoing_values(
                 "direct": "IN",
                 "type": data_type,
                 "value": secret,
-                "sensitive": True,
             }
         ],
     }
@@ -543,3 +541,147 @@ def test_contract_rejects_empty_static_lists_before_sql_rendering():
         parse_contract(raw)
 
     assert raised.value.code == "template.contract.invalid_static_value"
+
+
+@pytest.mark.parametrize(
+    ("data_type", "field", "format_name"),
+    [
+        ("DATE", "input_format", "HH:mm:ss"),
+        ("DATE", "format", "HH:mm:ss"),
+        ("DATE", "format", "yyyy-MM-dd HH:mm:ss"),
+        ("TIME", "input_format", "yyyy-MM-dd"),
+        ("TIME", "format", "yyyyMMdd"),
+        ("TIME", "format", "yyyy-MM-dd HH:mm:ss"),
+        ("TIMESTAMP", "input_format", "yyyy-MM-dd"),
+        ("TIMESTAMP", "input_format", "HH:mm:ss"),
+    ],
+)
+def test_contract_rejects_temporal_formats_that_invent_components(
+    data_type,
+    field,
+    format_name,
+):
+    raw = {
+        "version": 1,
+        "strict": True,
+        "startup_params": [
+            {
+                "prop": "value",
+                "type": data_type,
+                "source": "invocation.value",
+                "required": True,
+                "render": {field: format_name},
+            }
+        ],
+    }
+
+    with pytest.raises(ContractValidationError) as raised:
+        parse_contract(raw)
+
+    assert raised.value.code == "template.contract.invalid_format"
+    assert raised.value.path[-1] == field
+
+
+@pytest.mark.parametrize(
+    ("data_type", "input_format", "output_format"),
+    [
+        ("DATE", "yyyy-MM-dd", "yyyy"),
+        ("DATE", "yyyyMMdd", "yyyyMM"),
+        ("TIME", "HH:mm:ss", "HH:mm:ss"),
+        ("TIMESTAMP", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd"),
+        ("TIMESTAMP", "yyyyMMddHHmmss", "HH:mm:ss"),
+        ("TIMESTAMP", "yyyyMMddHHmmss", "yyyyMMddHHmmss"),
+    ],
+)
+def test_contract_accepts_lossless_temporal_inputs_and_safe_outputs(
+    data_type,
+    input_format,
+    output_format,
+):
+    contract = parse_contract(
+        {
+            "version": 1,
+            "strict": True,
+            "startup_params": [
+                {
+                    "prop": "value",
+                    "type": data_type,
+                    "source": "invocation.value",
+                    "required": True,
+                    "render": {
+                        "input_format": input_format,
+                        "format": output_format,
+                    },
+                }
+            ],
+        }
+    )
+
+    render = contract.startup_params[0].render
+    assert render.input_format == input_format
+    assert render.output_format == output_format
+
+
+def test_contract_rejects_yaml_date_as_timestamp_default():
+    raw = yaml.safe_load(
+        """version: 1
+strict: true
+startup_params:
+  - prop: run_ts
+    type: TIMESTAMP
+    source: invocation.run_ts
+    required: false
+    default: 2025-03-01
+"""
+    )
+
+    assert isinstance(raw["startup_params"][0]["default"], date)
+    with pytest.raises(ContractValidationError) as raised:
+        parse_contract(raw)
+
+    assert raised.value.code == "template.contract.invalid_static_value"
+
+
+def test_contract_rejects_temporal_derivations_that_invent_components():
+    raw = {
+        "version": 1,
+        "strict": True,
+        "startup_params": [
+            {
+                "prop": "etl_date",
+                "type": "DATE",
+                "source": "invocation.etl_date",
+                "required": True,
+            }
+        ],
+        "local_params": [
+            {
+                "prop": "derived_ts",
+                "direct": "IN",
+                "type": "TIMESTAMP",
+                "value": {
+                    "derive": {
+                        "from": "etl_date",
+                        "operation": "add_days",
+                        "amount": 1,
+                    }
+                },
+            }
+        ],
+    }
+
+    with pytest.raises(ContractValidationError) as raised:
+        parse_contract(raw)
+
+    assert raised.value.code == "template.contract.invalid_derivation_type"
+
+
+def test_contract_rejects_time_format_for_date_derivation_source():
+    raw = deepcopy(_valid_contract())
+    raw["local_params"][1]["value"]["derive"]["format"] = "HH:mm:ss"
+
+    with pytest.raises(ContractValidationError) as raised:
+        parse_contract(raw)
+
+    assert raised.value.code == "template.contract.invalid_format"
+    assert raised.value.path[-1] == "format"

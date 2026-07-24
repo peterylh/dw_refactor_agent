@@ -345,6 +345,37 @@ def _task_directory_assets(
     return sql_files, contract_files
 
 
+def _register_task_job_path(
+    job_paths: dict,
+    *,
+    role: str,
+    path: Path,
+    is_full_refresh: bool,
+) -> None:
+    """Register one task while allowing a same-role legacy companion pair."""
+    collision_key = path.stem.casefold()
+    previous_entries = job_paths.setdefault(collision_key, [])
+    for (
+        previous_role,
+        previous_path,
+        previous_is_full_refresh,
+    ) in previous_entries:
+        if previous_role != role:
+            code = "template.asset.cross_role_job_collision"
+        elif previous_is_full_refresh == is_full_refresh:
+            code = "template.asset.duplicate_job"
+        elif previous_path.stem == path.stem:
+            continue
+        else:
+            code = "template.asset.duplicate_job"
+        raise _task_asset_error(
+            f"task job stem collides with {previous_path}",
+            code=code,
+            path=path,
+        )
+    previous_entries.append((role, path, is_full_refresh))
+
+
 def discover_project_tasks(
     project: str,
     *,
@@ -393,21 +424,13 @@ def discover_project_tasks(
             )
         )
         for sql_path in ordered_sql:
-            collision_key = sql_path.stem.casefold()
-            previous = job_paths.get(collision_key)
-            if previous is not None:
-                previous_role, previous_path = previous
-                code = (
-                    "template.asset.cross_role_job_collision"
-                    if previous_role != role
-                    else "template.asset.duplicate_job"
-                )
-                raise _task_asset_error(
-                    f"task job stem collides with {previous_path}",
-                    code=code,
-                    path=sql_path,
-                )
-            job_paths[collision_key] = (role, sql_path)
+            is_full_refresh = sql_path.parent.name == "full_refresh"
+            _register_task_job_path(
+                job_paths,
+                role=role,
+                path=sql_path,
+                is_full_refresh=is_full_refresh,
+            )
 
             contract_path = contracts_by_pair.get(
                 (sql_path.parent, sql_path.stem)
@@ -433,7 +456,6 @@ def discover_project_tasks(
                     sql_path,
                     contract_path,
                 )
-            is_full_refresh = sql_path.parent.name == "full_refresh"
             discovered.append(
                 ProjectTaskAsset(
                     project=project,
@@ -487,21 +509,12 @@ def _task_sql_path_records(
             for path in sorted(directory.glob("*.sql")):
                 if not path.is_file():
                     continue
-                collision_key = path.stem.casefold()
-                previous = seen_jobs.get(collision_key)
-                if previous is not None:
-                    previous_role, previous_path = previous
-                    code = (
-                        "template.asset.cross_role_job_collision"
-                        if previous_role != role
-                        else "template.asset.duplicate_job"
-                    )
-                    raise _task_asset_error(
-                        f"task job stem collides with {previous_path}",
-                        code=code,
-                        path=path,
-                    )
-                seen_jobs[collision_key] = (role, path)
+                _register_task_job_path(
+                    seen_jobs,
+                    role=role,
+                    path=path,
+                    is_full_refresh=is_full_refresh,
+                )
                 records.append(
                     (
                         role,

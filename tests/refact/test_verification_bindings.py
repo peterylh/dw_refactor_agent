@@ -8,7 +8,6 @@ import pytest
 import yaml
 
 import dw_refactor_agent.refactor.shadow_run as shadow_run_module
-from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.qa_pool import QaSlotOwnership
@@ -37,7 +36,7 @@ def _write_template_project(tmp_path):
     for path in (task_dir, model_dir, ddl_dir):
         path.mkdir(parents=True, exist_ok=True)
 
-    secret = "prod-secret-do-not-log"
+    tenant_code = "demo-tenant"
     warehouse = {
         "name": "demo",
         "catalog": "internal",
@@ -49,14 +48,14 @@ def _write_template_project(tmp_path):
                 "startup": {"etl_date": "2000-02-29"},
                 "project": {
                     "cdm_schema": "analysis_dm",
-                    "secret_token": "analysis-secret",
+                    "tenant_code": "analysis-tenant",
                 },
             },
             "bindings": {
                 "prod": {
                     "project": {
                         "cdm_schema": "demo_dm",
-                        "secret_token": secret,
+                        "tenant_code": tenant_code,
                     }
                 }
             },
@@ -89,7 +88,7 @@ execution:
 LIKE ${cdm_schema}.source_data;
 INSERT INTO ${cdm_schema}.${run_table}
 SELECT * FROM ${cdm_schema}.source_data
-WHERE secret_token = ${secret_token};
+WHERE tenant_code = ${tenant_code};
 INSERT INTO ${cdm_schema}.report
 SELECT * FROM ${cdm_schema}.${run_table}
 WHERE stat_date = ${etl_date}
@@ -115,11 +114,10 @@ WHERE stat_date = ${etl_date}
                 "required": True,
             },
             {
-                "prop": "secret_token",
+                "prop": "tenant_code",
                 "type": "VARCHAR",
-                "source": "project.secret_token",
+                "source": "project.tenant_code",
                 "required": True,
-                "sensitive": True,
             },
         ],
         "local_params": [
@@ -149,11 +147,11 @@ WHERE stat_date = ${etl_date}
         yaml.safe_dump(contract, sort_keys=False),
         encoding="utf-8",
     )
-    return sql_path, contract_path, secret
+    return sql_path, contract_path, tenant_code
 
 
 def _frozen_plan(tmp_path):
-    sql_path, contract_path, secret = _write_template_project(tmp_path)
+    sql_path, contract_path, tenant_code = _write_template_project(tmp_path)
     task_rendering = build_task_rendering_context(
         reference_date=date(2025, 1, 20)
     )
@@ -179,11 +177,11 @@ def _frozen_plan(tmp_path):
         "baseline_ddl": {
             "source_data": (
                 "CREATE TABLE demo_dm.source_data "
-                "(stat_date DATE, secret_token VARCHAR(64)) ENGINE=OLAP;"
+                "(stat_date DATE, tenant_code VARCHAR(64)) ENGINE=OLAP;"
             ),
             "report": (
                 "CREATE TABLE demo_dm.report "
-                "(stat_date DATE, secret_token VARCHAR(64)) ENGINE=OLAP;"
+                "(stat_date DATE, tenant_code VARCHAR(64)) ENGINE=OLAP;"
             ),
         },
         "ddl_changes": [],
@@ -199,11 +197,11 @@ def _frozen_plan(tmp_path):
         "analysis_snapshot": {"workspace_fingerprint": "sha256:" + "a" * 64},
         "plan_fingerprint": "sha256:" + "b" * 64,
     }
-    return plan, planner, contract_path, secret
+    return plan, planner, contract_path, tenant_code
 
 
-def test_verification_plan_freezes_safe_complete_binding_evidence(tmp_path):
-    plan, planner, _contract_path, secret = _frozen_plan(tmp_path)
+def test_verification_plan_freezes_complete_binding_evidence(tmp_path):
+    plan, planner, _contract_path, tenant_code = _frozen_plan(tmp_path)
 
     summaries = plan["jobs_to_run"][0]["verification_invocations"]
 
@@ -212,9 +210,9 @@ def test_verification_plan_freezes_safe_complete_binding_evidence(tmp_path):
     assert all(
         item["binding_digest"].startswith("sha256:") for item in summaries
     )
-    assert summaries[0]["binding_summary"]["secret_token"] == "<redacted>"
-    assert "secret_token" not in summaries[0]["render_inputs"]
-    assert secret not in json.dumps(summaries)
+    assert summaries[0]["binding_summary"]["tenant_code"] == tenant_code
+    assert summaries[0]["render_inputs"]["tenant_code"] == tenant_code
+    assert tenant_code in json.dumps(summaries)
     assert (
         len(
             materialize_frozen_job_invocations(
@@ -228,7 +226,7 @@ def test_verification_plan_freezes_safe_complete_binding_evidence(tmp_path):
 
 
 def test_multiple_rendered_dynamic_relations_enter_shadow_scope(tmp_path):
-    plan, planner, _contract_path, _secret = _frozen_plan(tmp_path)
+    plan, planner, _contract_path, _tenant_code = _frozen_plan(tmp_path)
 
     manifest = compile_shadow_manifest(plan, tmp_path, planner)
     summary = manifest_summary(manifest)
@@ -240,7 +238,7 @@ def test_multiple_rendered_dynamic_relations_enter_shadow_scope(tmp_path):
 
 
 def test_shadow_renders_then_rewrites_then_injects_session_params(tmp_path):
-    plan, planner, _contract_path, _secret = _frozen_plan(tmp_path)
+    plan, planner, _contract_path, _tenant_code = _frozen_plan(tmp_path)
     job = plan["jobs_to_run"][0]
     manifest = compile_shadow_manifest(plan, tmp_path, planner)
     invocation = materialize_frozen_job_invocations(
@@ -264,10 +262,8 @@ def test_shadow_renders_then_rewrites_then_injects_session_params(tmp_path):
     assert rendered.index("SET @full_refresh") < rendered.index("CREATE TABLE")
 
 
-def test_shadow_result_contains_only_redacted_binding_summaries(
-    tmp_path, capsys
-):
-    plan, _planner, _contract_path, secret = _frozen_plan(tmp_path)
+def test_shadow_result_contains_complete_binding_summaries(tmp_path, capsys):
+    plan, _planner, _contract_path, tenant_code = _frozen_plan(tmp_path)
 
     result = execute_shadow_plan(plan, root=tmp_path, dry_run=True)
     captured = capsys.readouterr()
@@ -277,23 +273,23 @@ def test_shadow_result_contains_only_redacted_binding_summaries(
     )
 
     assert result["status"] == "dry_run"
-    assert secret not in serialized
-    assert secret not in captured.out
-    assert secret not in captured.err
+    assert tenant_code in serialized
+    assert tenant_code in captured.out
+    assert tenant_code not in captured.err
     assert (
         run_jobs["jobs"][0]["rendered_bindings"][0]["binding_summary"][
-            "secret_token"
+            "tenant_code"
         ]
-        == "<redacted>"
+        == tenant_code
     )
 
 
-def test_template_execution_error_is_redacted_from_logs_and_results(
+def test_template_execution_error_is_reported_in_logs_and_results(
     tmp_path,
     monkeypatch,
     capsys,
 ):
-    plan, _planner, _contract_path, secret = _frozen_plan(tmp_path)
+    plan, _planner, _contract_path, tenant_code = _frozen_plan(tmp_path)
     monkeypatch.setattr(
         shadow_run_module,
         "require_slot_ownership",
@@ -308,7 +304,7 @@ def test_template_execution_error_is_redacted_from_logs_and_results(
         shadow_run_module,
         "run_sql_text",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError(f"syntax error near {secret}")
+            RuntimeError(f"syntax error near {tenant_code}")
         ),
     )
     ownership = QaSlotOwnership(
@@ -336,24 +332,24 @@ def test_template_execution_error_is_redacted_from_logs_and_results(
     )["jobs"][0]
 
     assert result["status"] == "failed"
-    assert secret not in serialized
-    assert secret not in captured.out
-    assert secret not in captured.err
-    assert "sensitive details omitted" in job["error"]
-    assert "sensitive details omitted" in job["invocations"][0]["error"]
+    assert tenant_code in serialized
+    assert tenant_code in captured.out
+    assert tenant_code not in captured.err
+    assert f"syntax error near {tenant_code}" in job["error"]
+    assert f"syntax error near {tenant_code}" in job["invocations"][0]["error"]
 
 
-def test_template_compile_error_is_redacted_before_result_and_logging(
+def test_template_compile_error_is_reported_in_result(
     tmp_path,
     monkeypatch,
     capsys,
 ):
-    plan, _planner, _contract_path, secret = _frozen_plan(tmp_path)
+    plan, _planner, _contract_path, tenant_code = _frozen_plan(tmp_path)
     monkeypatch.setattr(
         shadow_run_module,
         "compile_shadow_manifest",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError(f"parse failed near {secret}")
+            RuntimeError(f"parse failed near {tenant_code}")
         ),
     )
 
@@ -361,46 +357,21 @@ def test_template_compile_error_is_redacted_before_result_and_logging(
     captured = capsys.readouterr()
 
     assert result["status"] == "failed"
-    assert secret not in json.dumps(result)
-    assert secret not in captured.out
-    assert secret not in captured.err
+    assert tenant_code in json.dumps(result)
+    assert captured.out == ""
+    assert tenant_code not in captured.err
     assert result["phases"][0]["blockers"] == [
-        "shadow manifest compilation failed; sensitive details omitted"
+        f"parse failed near {tenant_code}"
     ]
 
 
-def test_sensitive_dynamic_relation_is_rejected_before_manifest(tmp_path):
-    plan, _planner, contract_path, _secret = _frozen_plan(tmp_path)
-    contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
-    contract["local_params"][0]["sensitive"] = True
-    contract_path.write_text(
-        yaml.safe_dump(contract, sort_keys=False),
-        encoding="utf-8",
-    )
-    planner = verification_planner(
-        "demo",
-        tmp_path,
-        plan["task_rendering"],
-    )
-
-    with pytest.raises(
-        ExecutionConfigError,
-        match="sensitive_identifier",
-    ):
-        freeze_job_invocations(
-            plan["jobs_to_run"][0],
-            planner=planner,
-            root=tmp_path,
-        )
-
-
 def test_binding_change_after_analysis_rejects_frozen_plan(tmp_path):
-    plan, _planner, _contract_path, _secret = _frozen_plan(tmp_path)
+    plan, _planner, _contract_path, _tenant_code = _frozen_plan(tmp_path)
     warehouse_path = tmp_path / "warehouses" / "demo" / "warehouse.yaml"
     warehouse = yaml.safe_load(warehouse_path.read_text(encoding="utf-8"))
     warehouse["task_templates"]["bindings"]["prod"]["project"][
-        "secret_token"
-    ] = "changed-secret"
+        "tenant_code"
+    ] = "changed-tenant"
     warehouse_path.write_text(
         yaml.safe_dump(warehouse, sort_keys=False),
         encoding="utf-8",
@@ -432,7 +403,7 @@ def test_verification_context_rejects_ambient_environment_and_renderer_change():
 
 
 def test_template_load_failure_precedes_qa_slot_claim(tmp_path, monkeypatch):
-    plan, _planner, contract_path, _secret = _frozen_plan(tmp_path)
+    plan, _planner, contract_path, _tenant_code = _frozen_plan(tmp_path)
     contract_path.write_text(
         "version: 1\nstrict: true\nstartup_params: invalid\n",
         encoding="utf-8",

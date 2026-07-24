@@ -69,6 +69,24 @@ class ParameterType(Enum):
             ) from exc
 
 
+_TEMPORAL_INPUT_FORMATS = {
+    ParameterType.DATE: frozenset({"yyyyMMdd", "yyyy-MM-dd"}),
+    ParameterType.TIME: frozenset({"HH:mm:ss"}),
+    ParameterType.TIMESTAMP: frozenset(
+        {"yyyy-MM-dd HH:mm:ss", "yyyyMMddHHmmss"}
+    ),
+}
+_TEMPORAL_OUTPUT_FORMATS = {
+    ParameterType.DATE: frozenset(
+        {"yyyy", "yyyyMM", "yyyyMMdd", "yyyy-MM-dd"}
+    ),
+    ParameterType.TIME: frozenset({"HH:mm:ss"}),
+    # A timestamp owns both components, so output formatting may deliberately
+    # project a date, time, or complete timestamp without inventing values.
+    ParameterType.TIMESTAMP: frozenset(_FORMAT_PATTERNS),
+}
+
+
 @dataclass(frozen=True)
 class RenderSpec:
     """Input and SQL output formatting for one typed parameter."""
@@ -99,6 +117,30 @@ def validate_format(value: object, *, path: Tuple[object, ...]) -> str:
     return text
 
 
+def validate_temporal_format(
+    format_name: str,
+    *,
+    data_type: ParameterType,
+    is_output: bool,
+    path: Tuple[object, ...],
+) -> str:
+    """Validate that a temporal format cannot invent missing components."""
+    formats_by_type = (
+        _TEMPORAL_OUTPUT_FORMATS if is_output else _TEMPORAL_INPUT_FORMATS
+    )
+    allowed = formats_by_type.get(data_type, frozenset())
+    if format_name not in allowed:
+        field = "output" if is_output else "input"
+        expected = ", ".join(sorted(allowed))
+        raise ContractValidationError(
+            f"{data_type.value} does not accept {field} format "
+            f"{format_name!r}; expected one of {expected}",
+            code="template.contract.invalid_format",
+            path=path,
+        )
+    return format_name
+
+
 def format_temporal(value: object, format_name: str) -> str:
     """Format an already typed temporal value using the contract vocabulary."""
     return value.strftime(_FORMAT_PATTERNS[format_name])
@@ -126,8 +168,6 @@ def _parse_temporal(
     else:
         if isinstance(value, datetime):
             return value
-        if isinstance(value, date):
-            return datetime.combine(value, time())
         default_format = "yyyy-MM-dd HH:mm:ss"
         target = datetime
 

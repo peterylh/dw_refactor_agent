@@ -17,6 +17,7 @@ from .task_template import (
     load_task_definition,
     render_task,
 )
+from .task_template.scoped_bindings import scope_bindings
 
 
 def _mapping(
@@ -52,7 +53,7 @@ class TaskExecutionProfile:
 
 @dataclass(frozen=True)
 class ExecutionTaskSql:
-    """Execution SQL plus private roots and a redacted public summary."""
+    """Execution SQL plus typed roots and a stable public summary."""
 
     sql: Optional[str]
     is_template: bool
@@ -183,52 +184,6 @@ def load_execution_task_asset(
     )
 
 
-def _source_alias(source: Optional[str], prefix: str) -> Optional[str]:
-    marker = f"{prefix}."
-    if source and source.startswith(marker):
-        return source[len(marker) :]
-    return None
-
-
-def _scope_bindings(
-    definitions,
-    values: Mapping[str, object],
-    *,
-    source_prefix: str,
-) -> dict:
-    scoped = {}
-    claimed_aliases = {}
-    for definition in definitions:
-        keys = [definition.prop]
-        if definition.source:
-            keys.append(definition.source)
-        alias = _source_alias(definition.source, source_prefix)
-        if alias:
-            keys.append(alias)
-        candidates = [(key, values[key]) for key in keys if key in values]
-        if not candidates:
-            continue
-        first_value = candidates[0][1]
-        if any(value != first_value for _key, value in candidates[1:]):
-            raise TemplateRenderError(
-                f"conflicting {source_prefix} values for {definition.prop!r}",
-                code="template.render.conflicting_binding",
-                path=(definition.prop,),
-            )
-        for key, _value in candidates:
-            previous = claimed_aliases.get(key)
-            if previous is not None and previous != definition.prop:
-                raise TemplateRenderError(
-                    f"{source_prefix} binding {key!r} is ambiguous for "
-                    f"{previous!r} and {definition.prop!r}",
-                    code="template.render.ambiguous_binding",
-                    path=(source_prefix, key),
-                )
-            claimed_aliases[key] = definition.prop
-        scoped[definition.prop] = first_value
-    return scoped
-
-
 def render_task_execution_sql(
     asset: ProjectTaskAsset,
     *,
@@ -249,12 +204,12 @@ def render_task_execution_sql(
     if definition is None:
         raise AssertionError("template asset has no TaskDefinition")
     profile = task_execution_profile(project_config, environment)
-    startup = _scope_bindings(
+    startup = scope_bindings(
         definition.contract.startup_params,
         session_params,
         source_prefix="invocation",
     )
-    project = _scope_bindings(
+    project = scope_bindings(
         definition.contract.project_params,
         profile.project,
         source_prefix="project",
@@ -302,28 +257,12 @@ def render_task_execution_sql(
             overrides=overrides,
         ),
     )
-    sensitive = definition.contract.sensitive_props
-    public_session_params = {}
-    for key, value in session_params.items():
-        matching_props = {
-            item.prop
-            for item in definition.contract.startup_params
-            if key
-            in {
-                item.prop,
-                item.source,
-                _source_alias(item.source, "invocation"),
-            }
-        }
-        public_session_params[key] = (
-            "<redacted>" if matching_props & sensitive else value
-        )
     return ExecutionTaskSql(
         sql=rendered.sql,
         is_template=True,
         render_inputs=dict(rendered.resolved_bindings),
         public_summary=rendered.normalized_summary(),
-        public_session_params=public_session_params,
+        public_session_params=dict(session_params),
     )
 
 

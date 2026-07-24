@@ -36,6 +36,22 @@ def test_sql_ast_equivalence_returns_false_for_unparseable_sql():
     assert sql_ast_equivalent("SELECT (", "SELECT (", {}) is False
 
 
+def test_analysis_sql_normalization_ignores_a03_style_empty_statements():
+    normalized = semantic_mode_module._normalized_analysis_sql(
+        "DELETE FROM target WHERE data_dt = '2025-01-15';;\n"
+        ";\n"
+        "INSERT INTO target SELECT * FROM source;;\n"
+    )
+
+    assert normalized == {
+        "parseable": True,
+        "statements": [
+            "DELETE FROM target WHERE data_dt = '2025-01-15'",
+            "INSERT INTO target SELECT * FROM source",
+        ],
+    }
+
+
 def test_valid_user_equivalent_overrides_changed_upstream():
     facts = {
         "dwd_order": _fact("dwd_order", is_direct=True),

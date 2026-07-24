@@ -1251,6 +1251,17 @@ def test_run_rejects_missing_or_changed_renderer_semantics(
         run_cli._require_run_renderer_semantics(manifest)
 
 
+def test_run_rejects_v1_renderer_semantics_digest():
+    manifest = {
+        "task_renderer_semantics_digest": (
+            "sha256:e1726e614629960959f861501743c3fdd6980e344abbccaa8e4b0e8b56240a60"
+        )
+    }
+
+    with pytest.raises(StalePlanError, match="stale_run.*new run.*start"):
+        run_cli._require_run_renderer_semantics(manifest)
+
+
 def test_semantic_mode_set_rejects_table_outside_affected_scope(
     tmp_path, monkeypatch
 ):

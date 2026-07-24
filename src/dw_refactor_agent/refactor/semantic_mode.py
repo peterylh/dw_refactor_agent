@@ -1221,6 +1221,7 @@ def _normalized_analysis_sql(sql_text: str) -> dict:
         "statements": [
             statement.sql(dialect="doris", pretty=False)
             for statement in statements
+            if statement is not None
         ],
     }
 

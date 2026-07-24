@@ -2,6 +2,7 @@ import subprocess
 
 import pytest
 
+import dw_refactor_agent.refactor.change_analysis as change_analysis_module
 from dw_refactor_agent.refactor.change_analysis import (
     build_change_analysis,
     changed_files_since_head,
@@ -118,6 +119,242 @@ def test_build_change_analysis_marks_warehouse_config_as_global():
         "naming",
         "reuse",
     ]
+
+
+def _template_config_lineage():
+    return {
+        "format_version": 2,
+        "tables": [
+            {
+                "full_name": "internal.demo.dws_order",
+                "dataset_type": "managed",
+            }
+        ],
+        "jobs": [
+            {
+                "name": "dws_order",
+                "source_file": "dws_order.sql",
+                "inputs": ["internal.source.orders"],
+                "outputs": ["internal.demo.dws_order"],
+            }
+        ],
+        "edges": [],
+    }
+
+
+def _init_template_config_repo(
+    tmp_path,
+    monkeypatch,
+    *,
+    task_relative_dir="mid/tasks",
+):
+    project_dir = tmp_path / "warehouses" / "demo"
+    task_dir = project_dir / task_relative_dir
+    task_dir.mkdir(parents=True)
+    warehouse_path = project_dir / "warehouse.yaml"
+    warehouse_path.write_text(
+        """\
+name: demo
+catalog: internal
+database: demo
+description: baseline
+task_templates:
+  version: 1
+  analysis:
+    project:
+      source_schema: internal.source
+  bindings:
+    prod:
+      project:
+        source_schema: internal.source
+""",
+        encoding="utf-8",
+    )
+    (task_dir / "dws_order.sql").write_text(
+        "INSERT INTO internal.demo.dws_order "
+        "SELECT order_id FROM ${source_schema}.orders;\n",
+        encoding="utf-8",
+    )
+    (task_dir / "dws_order.yaml").write_text(
+        """\
+version: 1
+strict: true
+project_params:
+  - prop: source_schema
+    type: QUALIFIED_IDENTIFIER
+    source: project.source_schema
+    required: true
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "commit.gpgsign", "false"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "baseline"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    monkeypatch.setitem(
+        change_analysis_module.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "warehouses/demo",
+            "catalog": "internal",
+            "db": "demo",
+        },
+    )
+    return warehouse_path
+
+
+def test_prod_template_binding_change_selects_affected_job(
+    tmp_path, monkeypatch
+):
+    warehouse_path = _init_template_config_repo(tmp_path, monkeypatch)
+    warehouse_path.write_text(
+        warehouse_path.read_text(encoding="utf-8").replace(
+            "        source_schema: internal.source\n",
+            "        source_schema: internal.changed_source\n",
+        ),
+        encoding="utf-8",
+    )
+    lineage = _template_config_lineage()
+
+    result = build_change_analysis(
+        "demo",
+        lineage,
+        lineage,
+        ["warehouses/demo/warehouse.yaml"],
+        repo_root=tmp_path,
+        base_ref="HEAD",
+    )
+
+    assert result["changed_assets"]["task_jobs"] == ["dws_order"]
+    assert result["affected_scope"]["direct_tables"] == [
+        "internal.demo.dws_order"
+    ]
+
+
+def test_analysis_template_binding_change_selects_affected_job(
+    tmp_path, monkeypatch
+):
+    warehouse_path = _init_template_config_repo(tmp_path, monkeypatch)
+    warehouse_path.write_text(
+        warehouse_path.read_text(encoding="utf-8").replace(
+            "      source_schema: internal.source\n",
+            "      source_schema: internal.analysis_source\n",
+        ),
+        encoding="utf-8",
+    )
+    lineage = _template_config_lineage()
+
+    result = build_change_analysis(
+        "demo",
+        lineage,
+        lineage,
+        ["warehouses/demo/warehouse.yaml"],
+        repo_root=tmp_path,
+        base_ref="HEAD",
+    )
+
+    assert result["changed_assets"]["task_jobs"] == ["dws_order"]
+
+
+def test_ods_template_binding_change_selects_affected_job(
+    tmp_path, monkeypatch
+):
+    warehouse_path = _init_template_config_repo(
+        tmp_path,
+        monkeypatch,
+        task_relative_dir="ods/tasks/internal/source",
+    )
+    warehouse_path.write_text(
+        warehouse_path.read_text(encoding="utf-8").replace(
+            "        source_schema: internal.source\n",
+            "        source_schema: internal.changed_source\n",
+        ),
+        encoding="utf-8",
+    )
+    lineage = _template_config_lineage()
+
+    result = build_change_analysis(
+        "demo",
+        lineage,
+        lineage,
+        ["warehouses/demo/warehouse.yaml"],
+        repo_root=tmp_path,
+        base_ref="HEAD",
+    )
+
+    assert result["changed_assets"]["task_jobs"] == ["dws_order"]
+
+
+def test_unused_template_binding_change_does_not_select_template_jobs(
+    tmp_path, monkeypatch
+):
+    warehouse_path = _init_template_config_repo(tmp_path, monkeypatch)
+    warehouse_path.write_text(
+        warehouse_path.read_text(encoding="utf-8").replace(
+            "        source_schema: internal.source\n",
+            "        source_schema: internal.source\n"
+            "        unused_schema: internal.unused\n",
+        ),
+        encoding="utf-8",
+    )
+    lineage = _template_config_lineage()
+
+    result = build_change_analysis(
+        "demo",
+        lineage,
+        lineage,
+        ["warehouses/demo/warehouse.yaml"],
+        repo_root=tmp_path,
+        base_ref="HEAD",
+    )
+
+    assert result["changed_assets"]["task_jobs"] == []
+
+
+def test_unrelated_warehouse_change_does_not_select_template_jobs(
+    tmp_path, monkeypatch
+):
+    warehouse_path = _init_template_config_repo(tmp_path, monkeypatch)
+    warehouse_path.write_text(
+        warehouse_path.read_text(encoding="utf-8").replace(
+            "description: baseline",
+            "description: unrelated change",
+        ),
+        encoding="utf-8",
+    )
+    lineage = _template_config_lineage()
+
+    result = build_change_analysis(
+        "demo",
+        lineage,
+        lineage,
+        ["warehouses/demo/warehouse.yaml"],
+        repo_root=tmp_path,
+        base_ref="HEAD",
+    )
+
+    assert result["changed_assets"]["task_jobs"] == []
+    assert result["affected_scope"]["direct_tables"] == []
 
 
 def test_changed_files_since_head_filters_to_project_warehouse(tmp_path):

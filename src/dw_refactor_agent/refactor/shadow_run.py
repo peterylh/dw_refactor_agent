@@ -10,7 +10,6 @@ import sys
 import threading
 import time
 import uuid
-from collections.abc import Mapping
 from concurrent.futures import (
     ThreadPoolExecutor,
     as_completed,
@@ -69,12 +68,6 @@ from dw_refactor_agent.refactor.verification_checks import (
 FINAL_ALTER_JOB_STATES = {"FINISHED", "CANCELLED"}
 DEFAULT_ALTER_JOB_TIMEOUT_SECONDS = 300
 DEFAULT_ALTER_JOB_POLL_INTERVAL_SECONDS = 2
-SENSITIVE_TEMPLATE_EXECUTION_ERROR = (
-    "template SQL execution failed; sensitive details omitted"
-)
-SENSITIVE_TEMPLATE_COMPILE_ERROR = (
-    "shadow manifest compilation failed; sensitive details omitted"
-)
 ALTER_TABLE_RE = re.compile(
     r"^\s*ALTER\s+TABLE\s+"
     r"(?P<table>(?:`[^`]+`|[^\s]+)(?:\s*\.\s*(?:`[^`]+`|[^\s]+))?)"
@@ -714,38 +707,8 @@ def _execute_invocation_batch(
     executor.execute_batch([invocation for _driver_value, invocation in batch])
 
 
-def _bindings_have_redactions(bindings) -> bool:
-    return isinstance(bindings, Mapping) and any(
-        value == "<redacted>" for value in bindings.values()
-    )
-
-
-def _invocation_has_sensitive_bindings(invocation) -> bool:
-    return _bindings_have_redactions(
-        invocation.public_summary.get("public_bindings")
-    )
-
-
 def _safe_batch_error(exc: Exception, batch: list[tuple]) -> str:
-    if any(
-        _invocation_has_sensitive_bindings(invocation)
-        for _driver_value, invocation in batch
-    ):
-        return SENSITIVE_TEMPLATE_EXECUTION_ERROR
     return str(exc)
-
-
-def _plan_has_sensitive_bindings(plan: dict) -> bool:
-    for job in plan.get("jobs_to_run") or []:
-        if not isinstance(job, Mapping):
-            continue
-        for invocation in job.get("verification_invocations") or []:
-            if not isinstance(invocation, Mapping):
-                continue
-            bindings = invocation.get("binding_summary")
-            if _bindings_have_redactions(bindings):
-                return True
-    return False
 
 
 def _job_dependencies_from_plan(
@@ -1226,11 +1189,7 @@ def _compile_shadow_manifest_phase(
         plan["_shadow_manifest_summary"] = manifest_summary(manifest)
         return manifest, _finish_timing(phase, timer)
     except Exception as exc:
-        error = (
-            SENSITIVE_TEMPLATE_COMPILE_ERROR
-            if _plan_has_sensitive_bindings(plan)
-            else str(exc)
-        )
+        error = str(exc)
         phase = {
             "name": "compile_shadow_manifest",
             "status": "failed",
@@ -1989,33 +1948,23 @@ def _dry_run(
                     f"{driver_idx}/{len(invocation_pairs)}: "
                     f"{driver_value} ==="
                 )
-            frozen_summary = job["verification_invocations"][driver_idx - 1]
             print(
                 f"    strategy={invocation.strategy}, "
                 f"full_refresh={int(invocation.full_refresh)}, "
                 f"sql={invocation.sql_path}"
             )
-            if _bindings_have_redactions(
-                frozen_summary.get("binding_summary")
-            ):
-                print(
-                    "    template=verification, "
-                    f"render_digest={frozen_summary['render_digest']}, "
-                    "bindings=redacted_summary"
-                )
-            else:
-                job_manifest = manifest.jobs[job_name]
-                executor = ShadowSqlExecutor(
-                    context=job_manifest.context,
-                    qa_ready_tables=set(qa_ready_tables),
-                    run_sql_text=run_sql_text,
-                )
-                rendered = executor.render(invocation)
-                for line in rendered.splitlines()[:8]:
-                    print(f"    {line}")
-                total = len(rendered.splitlines())
-                if total > 8:
-                    print(f"    ... ({total} 行)")
+            job_manifest = manifest.jobs[job_name]
+            executor = ShadowSqlExecutor(
+                context=job_manifest.context,
+                qa_ready_tables=set(qa_ready_tables),
+                run_sql_text=run_sql_text,
+            )
+            rendered = executor.render(invocation)
+            for line in rendered.splitlines()[:8]:
+                print(f"    {line}")
+            total = len(rendered.splitlines())
+            if total > 8:
+                print(f"    ... ({total} 行)")
 
             qa_ready_tables.update(
                 manifest.jobs[job_name].outputs or {job_name}

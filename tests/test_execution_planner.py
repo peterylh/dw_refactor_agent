@@ -13,7 +13,10 @@ from dw_refactor_agent.execution.planner import (
     ExecutionConfigError,
     ExecutionPlanner,
 )
-from dw_refactor_agent.execution.sql_executor import DirectSqlExecutor
+from dw_refactor_agent.execution.sql_executor import (
+    DirectSqlExecutor,
+    SqlExecutionError,
+)
 
 
 def _write_demo_project(
@@ -123,7 +126,6 @@ def _write_template_task(
     *,
     slice_parameter="etl_date",
     startup_prop="etl_date",
-    startup_sensitive=False,
 ):
     sql_path, _ = _write_demo_project(
         monkeypatch,
@@ -145,7 +147,6 @@ def _write_template_task(
                 "type": "DATE",
                 "source": "invocation.etl_date",
                 "required": True,
-                "sensitive": startup_sensitive,
             }
         ],
         "project_params": [
@@ -196,18 +197,14 @@ def _write_template_task(
                 "prop": "run_table",
                 "direct": "IN",
                 "type": "IDENTIFIER",
-                "value": (
-                    "tmp_orders_safe"
-                    if startup_sensitive
-                    else {
-                        "derive": {
-                            "from": startup_prop,
-                            "operation": "format_date",
-                            "format": "yyyyMMdd",
-                            "prefix": "tmp_orders_",
-                        }
+                "value": {
+                    "derive": {
+                        "from": startup_prop,
+                        "operation": "format_date",
+                        "format": "yyyyMMdd",
+                        "prefix": "tmp_orders_",
                     }
-                ),
+                },
             },
         ],
         "usage": {
@@ -325,6 +322,34 @@ def test_direct_executor_injects_legacy_session_params_after_template_render(
     assert "`prod_dm`.`tmp_orders_20250301`" in calls[0]
 
 
+def test_direct_executor_reports_database_errors(
+    monkeypatch,
+    tmp_path,
+):
+    sql_value = "invalid-database-value"
+    invocation = TaskInvocation(
+        job_name="load_orders",
+        sql_path=tmp_path / "load_orders.sql",
+        params={},
+        full_refresh=False,
+        strategy="replay_slices",
+        resolved_sql=f"SELECT '{sql_value}';",
+        public_summary={"public_bindings": {"tenant": "public-tenant"}},
+    )
+    database_detail = f"syntax error near {sql_value}"
+    monkeypatch.setattr(
+        "dw_refactor_agent.execution.sql_executor.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, "", database_detail
+        ),
+    )
+
+    with pytest.raises(SqlExecutionError) as raised:
+        DirectSqlExecutor(["mysql"], "demo_dm").execute(invocation)
+
+    assert str(raised.value) == (f"[load_orders] [FAIL]\n  {database_detail}")
+
+
 def test_legacy_invocation_sql_bytes_remain_unchanged(
     monkeypatch,
     tmp_path,
@@ -431,29 +456,6 @@ def test_scheduler_etl_date_binds_yaml_internal_startup_name(
     assert invocation.session_params == {"etl_date": "2025-03-01"}
     assert invocation.render_inputs["business_date"] == date(2025, 3, 1)
     assert "'2025-03-01'" in invocation.resolved_sql
-
-
-def test_sensitive_template_inputs_are_redacted_from_public_invocation(
-    monkeypatch,
-    tmp_path,
-):
-    sql_path = _write_template_task(
-        monkeypatch,
-        tmp_path,
-        startup_sensitive=True,
-    )
-    planner = ExecutionPlanner("demo")
-
-    invocation = planner.plan_regular_run(
-        planner.task_spec("dwd_orders", sql_path),
-        ["2025-03-01"],
-    )[0]
-
-    assert invocation.public_session_params == {"etl_date": "<redacted>"}
-    assert "2025-03-01" not in repr(invocation)
-    assert invocation.public_summary["public_bindings"]["etl_date"] == (
-        "<redacted>"
-    )
 
 
 def test_execution_override_cannot_replace_scheduler_slice_dependency(

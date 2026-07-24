@@ -20,6 +20,7 @@ from .types import (
     normalize_value,
     render_sql_token,
     validate_format,
+    validate_temporal_format,
 )
 
 CONTRACT_VERSION = 1
@@ -61,7 +62,6 @@ class ParameterDefinition:
     direct: Optional[str] = None
     value: object = None
     overrideable: bool = False
-    sensitive: bool = False
 
     def dependencies(self) -> Tuple[str, ...]:
         """Return parameters that must resolve before this definition."""
@@ -71,12 +71,11 @@ class ParameterDefinition:
             return (self.value.source,)
         return ()
 
-    def as_dict(self, *, redact_sensitive: bool = False) -> dict:
+    def as_dict(self) -> dict:
         result = {
             "prop": self.prop,
             "type": self.data_type.value,
             "overrideable": self.overrideable,
-            "sensitive": self.sensitive,
         }
         if self.scope in {ParameterScope.STARTUP, ParameterScope.PROJECT}:
             result.update(
@@ -86,21 +85,13 @@ class ParameterDefinition:
                 }
             )
             if self.has_default:
-                result["default"] = (
-                    "<redacted>"
-                    if redact_sensitive and self.sensitive
-                    else normalize_value(self.default)
-                )
+                result["default"] = normalize_value(self.default)
         else:
             result["direct"] = self.direct
             if isinstance(self.value, (ReferenceValue, DerivationSpec)):
                 result["value"] = self.value.as_dict()
             else:
-                result["value"] = (
-                    "<redacted>"
-                    if redact_sensitive and self.sensitive
-                    else normalize_value(self.value)
-                )
+                result["value"] = normalize_value(self.value)
         if self.render.as_dict():
             result["render"] = self.render.as_dict()
         return result
@@ -179,23 +170,8 @@ class TaskTemplateContract:
         return result
 
     @property
-    def sensitive_props(self) -> frozenset:
-        sensitive = {item.prop for item in self.parameters if item.sensitive}
-        changed = True
-        while changed:
-            changed = False
-            for item in self.local_params:
-                if item.prop in sensitive:
-                    continue
-                if any(prop in sensitive for prop in item.dependencies()):
-                    sensitive.add(item.prop)
-                    changed = True
-        return frozenset(sensitive)
-
-    @property
     def parameters_by_name(self) -> Dict[str, ParameterDefinition]:
         result = {}
-        sensitive = self.sensitive_props
         for prop, group in self.parameter_groups.items():
             representative = next(
                 (item for item in group if item.scope is ParameterScope.LOCAL),
@@ -204,44 +180,26 @@ class TaskTemplateContract:
             result[prop] = replace(
                 representative,
                 overrideable=all(item.overrideable for item in group),
-                sensitive=prop in sensitive,
             )
         return result
 
-    def _as_dict(self, *, redact_sensitive: bool) -> dict:
+    def as_dict(self) -> dict:
         result = {"version": self.version, "strict": self.strict}
-        sensitive = self.sensitive_props if redact_sensitive else frozenset()
-
-        def serialize(item: ParameterDefinition) -> dict:
-            effective = (
-                replace(item, sensitive=True)
-                if item.prop in sensitive
-                else item
-            )
-            return effective.as_dict(redact_sensitive=redact_sensitive)
-
         if self.startup_params:
             result["startup_params"] = [
-                serialize(item) for item in self.startup_params
+                item.as_dict() for item in self.startup_params
             ]
         if self.project_params:
             result["project_params"] = [
-                serialize(item) for item in self.project_params
+                item.as_dict() for item in self.project_params
             ]
         if self.local_params:
             result["local_params"] = [
-                serialize(item) for item in self.local_params
+                item.as_dict() for item in self.local_params
             ]
         if self.usage.as_dict():
             result["usage"] = self.usage.as_dict()
         return result
-
-    def as_dict(self) -> dict:
-        return self._as_dict(redact_sensitive=False)
-
-    def redacted_dict(self) -> dict:
-        """Return a public summary with sensitive constants removed."""
-        return self._as_dict(redact_sensitive=True)
 
 
 def _require_mapping(
@@ -336,6 +294,20 @@ def _parse_render(
             code="template.contract.invalid_format",
             path=path,
         )
+    if input_format is not None:
+        validate_temporal_format(
+            input_format,
+            data_type=data_type,
+            is_output=False,
+            path=path + ("input_format",),
+        )
+    if output_format is not None:
+        validate_temporal_format(
+            output_format,
+            data_type=data_type,
+            is_output=True,
+            path=path + ("format",),
+        )
     if data_type is ParameterType.LIST:
         if item_type is None or item_type in {
             ParameterType.LIST,
@@ -383,7 +355,6 @@ def _parse_root_parameter(
             "required",
             "default",
             "overrideable",
-            "sensitive",
             "render",
         },
         path=path,
@@ -420,9 +391,6 @@ def _parse_root_parameter(
     overrideable = _require_bool(
         value.get("overrideable", False), field="overrideable", path=path
     )
-    sensitive = _require_bool(
-        value.get("sensitive", False), field="sensitive", path=path
-    )
     has_default = "default" in value
     if required and has_default:
         raise ContractValidationError(
@@ -442,7 +410,6 @@ def _parse_root_parameter(
         has_default=has_default,
         default=value.get("default"),
         overrideable=overrideable,
-        sensitive=sensitive,
     )
 
 
@@ -528,7 +495,6 @@ def _parse_local_parameter(
             "type",
             "value",
             "overrideable",
-            "sensitive",
             "render",
         },
         path=path,
@@ -561,9 +527,6 @@ def _parse_local_parameter(
             value.get("overrideable", False),
             field="overrideable",
             path=path,
-        ),
-        sensitive=_require_bool(
-            value.get("sensitive", False), field="sensitive", path=path
         ),
     )
 
@@ -766,6 +729,17 @@ def _validate_contract_graph(contract: TaskTemplateContract) -> None:
                         path=(item.prop, "value", "derive", "from"),
                     )
                 if item.value.operation == "format_date":
+                    validate_temporal_format(
+                        str(item.value.format_name),
+                        data_type=source_type,
+                        is_output=True,
+                        path=(
+                            item.prop,
+                            "value",
+                            "derive",
+                            "format",
+                        ),
+                    )
                     formatted_targets = {
                         ParameterType.VARCHAR,
                         ParameterType.FILE,
@@ -781,6 +755,16 @@ def _validate_contract_graph(contract: TaskTemplateContract) -> None:
                 elif item.data_type not in temporal:
                     raise ContractValidationError(
                         "date derivations must target DATE or TIMESTAMP",
+                        code="template.contract.invalid_derivation_type",
+                        path=(item.prop, "type"),
+                    )
+                elif (
+                    source_type is ParameterType.DATE
+                    and item.data_type is ParameterType.TIMESTAMP
+                ):
+                    raise ContractValidationError(
+                        "DATE derivations cannot target TIMESTAMP without "
+                        "inventing a time component",
                         code="template.contract.invalid_derivation_type",
                         path=(item.prop, "type"),
                     )
@@ -844,18 +828,6 @@ def _validate_contract_graph(contract: TaskTemplateContract) -> None:
                 code="template.contract.invalid_dynamic_relation",
                 path=("usage", "dynamic_relations", item.prop),
             )
-    identifier_types = {
-        ParameterType.IDENTIFIER,
-        ParameterType.QUALIFIED_IDENTIFIER,
-    }
-    for prop in contract.sensitive_props:
-        if parameters[prop].data_type in identifier_types:
-            raise ContractValidationError(
-                f"sensitive parameter {prop!r} cannot be an identifier",
-                code="template.contract.sensitive_identifier",
-                path=(prop, "sensitive"),
-            )
-
     state: Dict[str, str] = {}
 
     def visit(prop: str, trail: Tuple[str, ...]) -> None:

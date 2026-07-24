@@ -80,10 +80,8 @@ def validate_derivation(spec: DerivationSpec, *, path: tuple) -> None:
         )
 
 
-def _as_date(value: object, *, source: str) -> date:
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
+def _as_temporal(value: object, *, source: str) -> date:
+    if isinstance(value, (date, datetime)):
         return value
     raise TemplateRenderError(
         f"derivation source {source!r} must resolve to DATE or TIMESTAMP",
@@ -97,13 +95,13 @@ def _add_months(value: date, amount: int) -> date:
     year, zero_based_month = divmod(month_index, 12)
     month = zero_based_month + 1
     day = min(value.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
+    return value.replace(year=year, month=month, day=day)
 
 
 def _add_years(value: date, amount: int) -> date:
     year = value.year + amount
     day = min(value.day, calendar.monthrange(year, value.month)[1])
-    return date(year, value.month, day)
+    return value.replace(year=year, day=day)
 
 
 def derive_value(spec: DerivationSpec, values: Mapping[str, object]) -> object:
@@ -114,7 +112,7 @@ def derive_value(spec: DerivationSpec, values: Mapping[str, object]) -> object:
             code="template.render.missing_dependency",
             path=(spec.source,),
         )
-    source = _as_date(values[spec.source], source=spec.source)
+    source = _as_temporal(values[spec.source], source=spec.source)
     operation = spec.operation
     if operation == "add_days":
         return source + timedelta(days=int(spec.amount or 0))
@@ -129,11 +127,11 @@ def derive_value(spec: DerivationSpec, values: Mapping[str, object]) -> object:
             day=calendar.monthrange(source.year, source.month)[1]
         )
     if operation == "year_start":
-        return date(source.year, 1, 1)
+        return source.replace(month=1, day=1)
     if operation == "year_end":
-        return date(source.year, 12, 31)
+        return source.replace(month=12, day=31)
     if operation == "previous_year_end":
-        return date(source.year - 1, 12, 31)
+        return source.replace(year=source.year - 1, month=12, day=31)
     if operation == "format_date":
         formatted = format_temporal(source, str(spec.format_name))
         return f"{spec.prefix}{formatted}{spec.suffix}"

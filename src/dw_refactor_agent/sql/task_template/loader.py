@@ -109,7 +109,7 @@ class TaskDefinition:
             "template_digest": self.template_digest,
             "contract_digest": self.contract_digest,
             "placeholder_names": list(self.placeholder_names),
-            "contract": self.contract.redacted_dict(),
+            "contract": self.contract.as_dict(),
         }
 
 

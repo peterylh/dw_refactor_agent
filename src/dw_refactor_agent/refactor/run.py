@@ -703,6 +703,8 @@ def _analyze(args) -> int:
             baseline_lineage,
             current_lineage,
             changed_files,
+            repo_root=repo_root,
+            base_ref=manifest.get("base_git", {}).get("head", "HEAD"),
         )
         _write_json(
             artifact_path(manifest_path, "change_analysis"),

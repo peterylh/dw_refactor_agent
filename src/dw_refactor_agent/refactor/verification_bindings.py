@@ -21,7 +21,6 @@ from dw_refactor_agent.sql.task_template import (
 TASK_RENDERING_VERSION = 1
 VERIFICATION_BINDING_ENVIRONMENT = "prod"
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
-_REDACTED = "<redacted>"
 
 
 def build_task_rendering_context(
@@ -115,7 +114,7 @@ def invocation_binding_summary(
     *,
     root: Path,
 ) -> dict:
-    """Return a stable public record with no sensitive binding values."""
+    """Return a stable public record for one planned invocation."""
     public = dict(invocation.public_summary)
     session_params = dict(invocation.public_session_params)
     public_bindings = public.get("public_bindings")
@@ -139,11 +138,7 @@ def invocation_binding_summary(
             "config_digest": public.get("config_digest"),
             "binding_digest": public.get("binding_digest"),
             "render_digest": public.get("render_digest"),
-            "render_inputs": {
-                key: value
-                for key, value in binding_summary.items()
-                if value != _REDACTED
-            },
+            "render_inputs": dict(binding_summary),
             "binding_summary": binding_summary,
         }
     )
@@ -309,11 +304,6 @@ def validate_frozen_invocation_summary(
                 f"[{job_name}] verification_invocations[{index}].{field} "
                 "must be a mapping"
             )
-    if any(value == _REDACTED for value in value["render_inputs"].values()):
-        raise ArtifactFormatError(
-            f"[{job_name}] frozen render_inputs cannot contain redacted "
-            "sentinels"
-        )
 
 
 __all__ = [

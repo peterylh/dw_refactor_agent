@@ -22,9 +22,14 @@ from dw_refactor_agent.refactor.incremental_lineage import (
     build_lineage_artifacts,
 )
 from dw_refactor_agent.sql.task_analysis import (
+    TaskAnalysisProfile,
     resolve_project_tasks_analysis,
+    resolve_task_analysis_sql,
 )
-from dw_refactor_agent.sql.task_template import TemplateRenderError
+from dw_refactor_agent.sql.task_template import (
+    TemplateRenderError,
+    build_task_definition,
+)
 
 
 def _contract():
@@ -77,6 +82,41 @@ def _contract():
     }
 
 
+def _aliased_contract():
+    return {
+        "version": 1,
+        "strict": True,
+        "startup_params": [
+            {
+                "prop": "business_date",
+                "type": "DATE",
+                "source": "invocation.etl_date",
+                "required": True,
+            }
+        ],
+        "project_params": [
+            {
+                "prop": "warehouse_schema",
+                "type": "IDENTIFIER",
+                "source": "project.cdm_schema",
+                "required": True,
+            }
+        ],
+    }
+
+
+def _analysis_asset(tmp_path, sql, contract):
+    definition = build_task_definition(sql, contract)
+    return config.ProjectTaskAsset(
+        project="demo",
+        role="mid",
+        sql_path=tmp_path / "aliased_job.sql",
+        source_file="aliased_job.sql",
+        sql_text=sql,
+        template_definition=definition,
+    )
+
+
 def _configure_project(monkeypatch, tmp_path, *, include_template=True):
     project_dir = tmp_path / "warehouses" / "demo"
     tasks_dir = project_dir / "mid" / "tasks"
@@ -118,6 +158,131 @@ def _configure_project(monkeypatch, tmp_path, *, include_template=True):
         },
     )
     return project_dir, sql_path
+
+
+def test_analysis_accepts_startup_and_project_source_aliases(tmp_path):
+    asset = _analysis_asset(
+        tmp_path,
+        "SELECT ${business_date} FROM ${warehouse_schema}.source_table;",
+        _aliased_contract(),
+    )
+    profile = TaskAnalysisProfile(
+        startup={"etl_date": "2025-01-15"},
+        project={"cdm_schema": "logical_cdm"},
+    )
+
+    resolved = resolve_task_analysis_sql(asset, {}, profile=profile)
+
+    assert resolved.sql == (
+        "SELECT '2025-01-15' FROM `logical_cdm`.source_table;"
+    )
+    assert resolved.public_bindings["business_date"] == "2025-01-15"
+    assert resolved.public_bindings["warehouse_schema"] == "logical_cdm"
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        TaskAnalysisProfile(
+            startup={
+                "business_date": "2025-01-15",
+                "etl_date": "2025-01-16",
+            },
+            project={"cdm_schema": "logical_cdm"},
+        ),
+        TaskAnalysisProfile(
+            startup={"etl_date": "2025-01-15"},
+            project={
+                "warehouse_schema": "logical_cdm",
+                "cdm_schema": "other_cdm",
+            },
+        ),
+    ],
+)
+def test_analysis_rejects_conflicting_prop_and_source_alias_values(
+    tmp_path,
+    profile,
+):
+    asset = _analysis_asset(
+        tmp_path,
+        "SELECT ${business_date} FROM ${warehouse_schema}.source_table;",
+        _aliased_contract(),
+    )
+
+    with pytest.raises(TemplateRenderError) as raised:
+        resolve_task_analysis_sql(asset, {}, profile=profile)
+
+    assert raised.value.code == "template.render.conflicting_binding"
+
+
+@pytest.mark.parametrize(
+    ("sql", "contract", "profile", "expected_path"),
+    [
+        (
+            "SELECT ${business_date}, ${etl_date};",
+            {
+                "version": 1,
+                "strict": True,
+                "startup_params": [
+                    {
+                        "prop": "business_date",
+                        "type": "DATE",
+                        "source": "invocation.etl_date",
+                        "required": True,
+                    },
+                    {
+                        "prop": "etl_date",
+                        "type": "DATE",
+                        "source": "invocation.other_date",
+                        "required": True,
+                    },
+                ],
+            },
+            TaskAnalysisProfile(startup={"etl_date": "2025-01-15"}),
+            ("invocation", "etl_date"),
+        ),
+        (
+            (
+                "SELECT * FROM ${warehouse_schema}.first_table "
+                "JOIN ${cdm_schema}.second_table;"
+            ),
+            {
+                "version": 1,
+                "strict": True,
+                "project_params": [
+                    {
+                        "prop": "warehouse_schema",
+                        "type": "IDENTIFIER",
+                        "source": "project.cdm_schema",
+                        "required": True,
+                    },
+                    {
+                        "prop": "cdm_schema",
+                        "type": "IDENTIFIER",
+                        "source": "project.other_schema",
+                        "required": True,
+                    },
+                ],
+            },
+            TaskAnalysisProfile(project={"cdm_schema": "logical_cdm"}),
+            ("project", "cdm_schema"),
+        ),
+    ],
+)
+def test_analysis_rejects_ambiguous_external_aliases(
+    tmp_path,
+    sql,
+    contract,
+    profile,
+    expected_path,
+):
+    asset = _analysis_asset(tmp_path, sql, contract)
+
+    with pytest.raises(TemplateRenderError) as raised:
+        resolve_task_analysis_sql(asset, {}, profile=profile)
+
+    assert raised.value.code == "template.render.ambiguous_binding"
+    assert raised.value.path == expected_path
 
 
 def test_analysis_render_is_stable_parser_ready_and_uses_logical_bindings(
